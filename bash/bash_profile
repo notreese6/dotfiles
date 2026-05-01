@@ -1,0 +1,9 @@
+# ============================================================
+# ~/.bash_profile — login shell entry point.
+# ============================================================
+# macOS Terminal opens a *login* shell by default, which only
+# reads ~/.bash_profile (NOT ~/.bashrc). Most Linux terminal
+# emulators open a non-login shell, which reads ~/.bashrc.
+# Hand off to ~/.bashrc here so we have one source of truth.
+
+[ -f ~/.bashrc ] && . ~/.bashrc

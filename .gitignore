@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / swap / backup files
+*.swp
+*.swo
+*.bak
+*~
+.idea/
+.vscode/
+
+# Local-only overrides — ignored so personal/secret config never
+# leaks into the repo. Convention: source these from the tool's
+# main config if they exist, e.g. in .bashrc:
+#   [ -f ~/.bashrc.local ] && source ~/.bashrc.local
+*.local
+.bashrc.local
+.zshrc.local
+.gitconfig.local
+
+# Dotfiles installer's backup directory (created at install time
+# in $HOME, but ignore here too in case anyone clones into $HOME).
+.dotfiles-backup/

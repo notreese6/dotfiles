@@ -1,0 +1,120 @@
+# ============================================================
+# ~/.bashrc — shared across macOS + Linux machines
+# Loaded for every interactive shell. No installs required.
+# ============================================================
+
+# Refuse to load under non-bash interpreters. Bash sets
+# $BASH_VERSION; zsh, dash, ksh, and sh don't.
+if [ -z "${BASH_VERSION:-}" ]; then
+  printf '%s\n' \
+    "~/.bashrc: not running under bash — refusing to load." \
+    "  Fix: run 'bash', or 'chsh -s /bin/bash' and open a new terminal." >&2
+  return 2>/dev/null || exit 1
+fi
+
+# Bail out fast on non-interactive shells (e.g. scp).
+case $- in *i*) ;; *) return ;; esac
+
+# Silence macOS's "the default interactive shell is now zsh" nag,
+# which /etc/bashrc prints on every new shell. We're using bash on
+# purpose; we don't need the reminder.
+export BASH_SILENCE_DEPRECATION_WARNING=1
+
+
+# ---- History -----------------------------------------------
+# Up-arrow stays per-shell because we never reload from disk.
+# Every command is still appended to ~/.bash_history immediately
+# so two shells running at once don't lose each other's work.
+
+HISTSIZE=1000000
+HISTFILESIZE=1000000
+HISTCONTROL=ignoreboth:erasedups   # skip dupes & lines starting with space
+HISTTIMEFORMAT='%F %T '            # show timestamps in `history`
+
+shopt -s histappend                # append on shell exit, don't clobber
+shopt -s checkwinsize              # keep $LINES/$COLUMNS in sync after resize
+
+
+# ---- Shell ergonomics --------------------------------------
+
+set -o vi                          # vi keybindings at the prompt
+                                   # (press Esc to enter normal mode)
+
+# Built-in readline tweaks — no install needed.
+bind 'set completion-ignore-case on'   # case-insensitive Tab completion
+bind 'set show-all-if-ambiguous on'    # 1st Tab shows the full list
+
+
+# ---- Editor ------------------------------------------------
+
+export EDITOR=vim
+export VISUAL=vim
+
+
+# Track the bash we're actually in. $SHELL is inherited from the
+# parent and isn't refreshed by `exec bash` — make and friends read it.
+export SHELL="${BASH:-/bin/bash}"
+
+
+# ---- Homebrew / PATH ---------------------------------------
+# `brew shellenv` sets PATH/MANPATH/INFOPATH cleanly. Works on
+# Apple Silicon (/opt/homebrew) and Intel (/usr/local). No-op on
+# Linux machines that don't have brew.
+
+[ -x /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+[ -x /usr/local/bin/brew    ] && eval "$(/usr/local/bin/brew shellenv)"
+
+# Personal scripts directories.
+[ -d "$HOME/.local/bin" ] && PATH="$HOME/.local/bin:$PATH"
+[ -d "$HOME/bin"        ] && PATH="$HOME/bin:$PATH"
+export PATH
+
+
+# ---- ls colors (cross-platform) ----------------------------
+# GNU ls (Linux) reads --color; BSD ls (macOS) reads CLICOLOR.
+
+if ls --color=auto >/dev/null 2>&1; then
+  alias ls='ls --color=auto'
+else
+  export CLICOLOR=1
+fi
+
+
+# ---- Aliases -----------------------------------------------
+
+alias tmuxdev='~/.tmux/scripts/dev-layout.sh'
+
+
+# ---- Prompt ------------------------------------------------
+# user@host:cwd (branch)  $   — $ is green on success, red on failure.
+# (branch) is silently omitted outside a git repo or if git isn't installed.
+
+__make_prompt() {
+  local last_exit=$?
+  history -a   # append this shell's last command to ~/.bash_history
+
+  local branch=""
+  if command -v git >/dev/null 2>&1; then
+    if branch=$(git symbolic-ref --short HEAD 2>/dev/null); then
+      branch=" ($branch)"
+    fi
+  fi
+
+  local color
+  if [ "$last_exit" = 0 ]; then
+    color='\[\e[0;32m\]'   # green
+  else
+    color='\[\e[0;31m\]'   # red
+  fi
+
+  PS1="\u@\h:\w${branch} ${color}\$\[\e[0m\] "
+}
+PROMPT_COMMAND='__make_prompt'
+
+
+# ---- Local overrides ---------------------------------------
+# Per-machine config (work tokens, machine-specific paths, etc.)
+# lives here and stays out of the public dotfiles repo. The
+# repo's .gitignore already excludes *.local files.
+
+[ -f ~/.bashrc.local ] && source ~/.bashrc.local

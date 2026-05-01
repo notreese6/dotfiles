@@ -1,0 +1,83 @@
+" ============================================================================
+"  ~/.vimrc — minimal, portable Vim config
+" ============================================================================
+
+" ---- Syntax & indentation --------------------------------------------------
+syntax enable          " syntax highlighting based on filetype
+set tabstop=4          " a literal Tab is rendered 4 columns wide
+set softtabstop=4      " <Tab> and <BS> in insert mode act as 4 spaces
+set shiftwidth=4       " indent step for >>, <<, ==, autoindent
+set expandtab          " <Tab> inserts spaces, never a real Tab char
+
+" ---- Display ---------------------------------------------------------------
+set number             " line numbers in the gutter
+set showcmd            " show partial commands as you type ('3d' before 'w')
+set linebreak          " wrap long lines at word boundaries, not mid-word
+set scrolloff=1        " keep at least 1 line of context above/below the cursor
+set title              " set terminal/tab title to current filename
+set cursorline         " highlight the current line
+hi CursorLine cterm=NONE     " keep cursorline subtle — no extra background
+
+" ---- Search ----------------------------------------------------------------
+set incsearch          " jump to matches as you type the pattern
+set hlsearch           " highlight all matches of the most recent search
+set ignorecase         " case-insensitive search by default…
+set smartcase          " …unless the pattern has a capital, then case-sensitive
+
+" Tap <Space> in normal mode to clear lingering search highlights.
+nnoremap <silent> <Space> :nohlsearch<CR>
+
+" ---- Command-line completion (bash-style) ---------------------------------
+set wildmenu                  " show menu of candidates above the cmdline
+set wildmode=longest,list     " 1st <Tab> = longest common prefix
+"                               2nd <Tab> = print full list, no cycling
+
+" ---- Buffer behavior -------------------------------------------------------
+" Lets you :e or :b away from a modified buffer without saving. Default Vim
+" errors with E37; :q / :qa still warn on actual quit.
+set hidden
+
+" ---- Editing ergonomics ----------------------------------------------------
+" Backspace can cross autoindent, line breaks, and the start-of-insert mark.
+set backspace=indent,eol,start
+
+" ---- Tab navigation (Vim 'tabs' = tab pages, not buffers) -----------------
+nnoremap tj :tabnext<CR>     " next tab
+nnoremap tk :tabprev<CR>     " prev tab
+
+" ---- Buffer navigation (optional, tab-less workflow) ---------------------
+" Vim's native file-switching model is buffers, not tabs:
+"   :e file       open a file (prev buffer stays loaded, thanks to `hidden`)
+"   :b name<Tab>  jump to a loaded buffer by substring match
+"   :ls           list buffers
+"   :bd           close current buffer
+" Uncomment for tj/tk-style buffer hotkeys:
+" nnoremap bn :bnext<CR>
+" nnoremap bp :bprev<CR>
+
+" ---- File browser (netrw, built into Vim) --------------------------------
+" `:e .` (or `:e src/`, `:e %:h`) opens netrw on a directory.
+" `:Lex` opens netrw as a persistent left sidebar (toggle with :Lex again).
+"
+" Inside netrw:
+"   <Enter>          open file / descend into directory
+"   -                go up one directory
+"   i                cycle view: thin / long / wide / tree
+"   t                open in a new tab
+"   %  d  R  D       new file / new dir / rename / delete
+let g:netrw_liststyle = 3   " tree view by default
+let g:netrw_banner    = 0   " hide the banner header
+
+" ---- Strip trailing whitespace on save -----------------------------------
+" Scoped to listed filetypes — Markdown is excluded on purpose (double-space
+" EOLs are meaningful there). `keepp` keeps your search history clean; the
+" `e` flag suppresses the 'no matches' error.
+fun! <SID>StripTrailingWhitespace()
+    let l = line(".")
+    let c = col(".")
+    keepp %s/\s\+$//e
+    call cursor(l, c)
+endfun
+
+autocmd FileType c,python,zig,go,rust,sh,vim,lua,javascript,typescript
+      \ autocmd BufWritePre <buffer> :cal <SID>StripTrailingWhitespace()
