@@ -23,3 +23,6 @@
 # Dotfiles installer's backup directory (created at install time
 # in $HOME, but ignore here too in case anyone clones into $HOME).
 .dotfiles-backup/
+
+# Working design/plan docs — kept local, not shared.
+docs/

@@ -12,8 +12,12 @@ Personal config files for the tools I use day-to-day.
 | vim | `vim/vimrc` | `~/.vimrc` |
 | bash | `bash/bashrc` | `~/.bashrc` |
 | bash login | `bash/bash_profile` | `~/.bash_profile` |
+| AI agent rules | `ai/` | assembled into each agent's rules file |
 
 More to come (git, …).
+
+> **README revamp pending.** The `ai/` tooling is being built out and this file
+> still describes only the original tools. Rewrite once that work lands.
 
 ## Install
 
@@ -112,6 +116,15 @@ Recommended (used by some configs but not strictly required):
 - Git-aware prompt: shows `(branch)` when in a repo, hides otherwise. Prompt's `$` is green on success, red on the last command's failure.
 - One alias only: `tmuxdev` → `~/.tmux/scripts/dev-layout.sh`. The `tmux` prefix means tab-completion finds it after `tmu<Tab>`.
 - `~/.bash_profile` just sources `~/.bashrc`, so login shells (default on macOS Terminal) and non-login shells (default in tmux panes) behave the same.
+
+### ai
+
+Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled from two layers so one set of rules can be reused everywhere without leaking anything private.
+
+- `ai/AGENTS.md` — the universal, shareable rules. Edit these in one place; every agent gets them.
+- `ai/local_rules/` — the private, per-context layer (work-specific rules, internal conventions). **The directory is tracked but its contents are ignored**, so the layer exists on every clone and never reaches this repo. Drop `*.md` files in and they get merged in locally.
+- `ai/lib/`, `ai/bin/` — the assembler that merges the two layers into each agent's rules file, plus its setup command.
+- `ai/tests/` — `python3 -m unittest discover -s ai/tests -t ai/tests`
 
 ## Troubleshooting
 

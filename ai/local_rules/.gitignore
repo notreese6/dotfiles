@@ -1,0 +1,5 @@
+# This directory holds the private, per-context rules layer that `ai-rules`
+# merges into each agent's rules file. Its contents are machine-local and must
+# never reach this repo; only this file is tracked, so the directory ships empty.
+*
+!.gitignore
