@@ -102,3 +102,166 @@ def config_set(key, value):
         # the write failed partway.
         if tmp.exists():
             tmp.unlink()
+
+
+def _line_marker_index(text, marker, start=0, should_use_last=False):
+    """Find a marker that sits alone on its own line.
+
+    The generated markers always occupy a whole line, so requiring that keeps a
+    marker quoted inside prose or a code fence from being mistaken for one.
+
+    Args:
+        text (str): text to search.
+        marker (str): the exact marker string, without surrounding newlines.
+        start (int): index in `text` to start searching from.
+        should_use_last (bool): True returns the last qualifying occurrence, False the
+            first.
+
+    Returns:
+        int: index in `text` where the marker begins, or -1 when no occurrence
+        at or after `start` has a line to itself.
+
+    Raises:
+        None
+    """
+    found = -1
+    at    = text.find(marker, start)
+
+    while at != -1:
+        # A marker owns its line when only a line break (or the edge of the
+        # text) sits on either side of it.
+        opens  = at == 0 or text[at - 1] == "\n"
+        closes = text[at + len(marker):at + len(marker) + 1] in ("", "\n")
+
+        if opens and closes:
+            found = at
+            if not should_use_last:
+                return found
+
+        at = text.find(marker, at + 1)
+
+    return found
+
+
+def strip_block(text, begin, end, should_repeat=False, should_use_last_end=False):
+    """Remove a marker-delimited region from the rules text, markers included.
+
+    Only markers alone on their own line count, so a marker quoted inside prose
+    or a code fence is left alone. Stripping the generated LOCAL region is what
+    makes re-assembly idempotent: the stale block is taken out before a fresh
+    one is appended, so it is replaced rather than duplicated.
+
+    Args:
+        text (str): rules text that may hold zero or more `begin`...`end`
+            regions.
+        begin (str): the exact opening marker, without surrounding newlines.
+        end (str): the exact closing marker, without surrounding newlines.
+        should_repeat (bool): True removes every region, False at most one. Use True
+            when the region can legitimately occur more than once.
+        should_use_last_end (bool): True closes a region on the LAST whole-line `end`
+            marker after its begin marker, False on the FIRST. Use True only
+            when there is a single region whose end marker is the document's
+            last line.
+
+    Returns:
+        str: `text` with the matching region(s) removed, returned unchanged when
+        no whole-line begin marker is present. A begin marker with no whole-line
+        end marker after it takes everything from the marker to the end of the
+        text with it.
+
+    Raises:
+        None
+    """
+    out   = text
+    start = _line_marker_index(out, begin)
+
+    while start != -1:
+        # FIRST end marker keeps repeated regions from merging (the prose between
+        # them would be swallowed); LAST protects a single generated block whose
+        # body may quote the end marker on a line of its own.
+        stop = _line_marker_index(out, end, start + len(begin), should_use_last=should_use_last_end)
+
+        if stop == -1:
+            cut = len(out)
+        else:
+            # Step past the marker, then past its own line break so the cut lands
+            # on a line boundary. The newline in FRONT of the begin marker is left
+            # in place, so a blank line can remain where the region was.
+            cut = stop + len(end)
+            if out[cut:cut + 1] == "\n":
+                cut += 1
+
+        out = out[:start] + out[cut:]
+
+        if not should_repeat:
+            break
+
+        start = _line_marker_index(out, begin)
+
+    return out
+
+
+def read_local_rules(local_dir):
+    """Concatenate the private local rules into a single block of text.
+
+    Args:
+        local_dir (str or pathlib.Path): directory holding the local `*.md`
+            rule files. Need not exist.
+
+    Returns:
+        str: the files' contents in sorted() filename order, separated by a
+        blank line, or "" when the directory is absent or holds no `.md` files.
+
+    Raises:
+        OSError: the directory exists but one of its files cannot be read.
+        UnicodeDecodeError: one of the files is not valid UTF-8.
+    """
+    directory = Path(local_dir)
+    if not directory.is_dir():
+        return ""
+
+    parts = []
+    for path in sorted(directory.glob("*.md")):
+        # Pinned to utf-8 rather than the locale default: under LC_ALL=C that
+        # default is ASCII, and these files carry em-dashes and curly quotes.
+        body = path.read_text(encoding="utf-8")
+
+        # Normalize a missing final newline so files never run together.
+        if not body.endswith("\n"):
+            body += "\n"
+        parts.append(body)
+
+    return "\n".join(parts)
+
+
+def assemble(universal, local_text, notes_enabled):
+    """Build the final per-agent rules text from the universal and local layers.
+
+    Args:
+        universal (str): the universal rules text. May already carry a LOCAL
+            block from an earlier run; it is replaced, not duplicated.
+        local_text (str): the private local rules, appended under the LOCAL
+            markers. Skipped entirely when it is empty or only whitespace.
+        notes_enabled (bool): True keeps the notes-nudge block, False strips it.
+
+    Returns:
+        str: the assembled rules, always ending in exactly one newline. When a
+        LOCAL block is written, one blank line sits inside each of its markers.
+
+    Raises:
+        None
+    """
+    body = universal
+    if not notes_enabled:
+        body = strip_block(body, NOTES_BEGIN, NOTES_END, should_repeat=True)
+
+    body = strip_block(body, LOCAL_BEGIN, LOCAL_END, should_use_last_end=True)
+    body = body.rstrip("\n")
+
+    if local_text.strip():
+        # Trailing newlines are trimmed so the blank line before LOCAL_END is
+        # always exactly one, mirroring the blank line after LOCAL_BEGIN.
+        block = local_text.rstrip("\n")
+        body  = "%s\n\n%s\n\n%s\n\n%s" % (body, LOCAL_BEGIN, block, LOCAL_END)
+
+    return body + "\n"
