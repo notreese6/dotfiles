@@ -8,6 +8,10 @@
 #   ./install.sh              # install everything
 #   ./install.sh tmux         # install only the tmux configs
 #   ./install.sh --dry-run    # show what would happen, change nothing
+#
+# Targets: tmux vim bash ai
+#   ai also runs ai-setup, which prompts for the private local-rules
+#   remote, the agents to write rules for, and the daily-notes path.
 # ============================================================
 
 # ---- Pre-flight ---------------------------------------------
@@ -47,7 +51,7 @@ unset _cmd
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
 
-for _dir in tmux vim bash; do
+for _dir in tmux vim bash ai; do
   [ -d "$DOTFILES_DIR/$_dir" ] || {
     echo "install.sh: expected '$_dir/' next to install.sh — is the repo intact?" >&2
     echo "  DOTFILES_DIR=$DOTFILES_DIR" >&2
@@ -63,14 +67,16 @@ TARGETS=()
 for arg in "$@"; do
   case "$arg" in
     --dry-run|-n) DRY_RUN=true ;;
-    -h|--help)    sed -n '2,12p' "$0"; exit 0 ;;
+    # Printed to the closing banner rather than to a fixed line number, which
+    # silently truncated the help the moment the header above grew a line.
+    -h|--help)    sed -n '2,/^# =\{10,\}$/p' "$0"; exit 0 ;;
     *)            TARGETS+=("$arg") ;;
   esac
 done
 
 # Default to all known targets when none are specified.
 if [ ${#TARGETS[@]} -eq 0 ]; then
-  TARGETS=(tmux vim bash)
+  TARGETS=(tmux vim bash ai)
 fi
 
 
@@ -154,6 +160,31 @@ install_bash() {
   link "$DOTFILES_DIR/bash/bash_profile" "$HOME/.bash_profile"
 }
 
+install_ai() {
+  info "Installing AI rules + tooling"
+  link "$DOTFILES_DIR/ai/bin/ai-rules" "$HOME/.local/bin/ai-rules"
+  link "$DOTFILES_DIR/ai/bin/ai-setup" "$HOME/.local/bin/ai-setup"
+
+  if $DRY_RUN; then
+    warn "would run ai-setup (prompts for local-rules remote, agents, notes path)"
+    return 0
+  fi
+
+  info "Running ai-setup"
+
+  # `set -e` at the top already aborts on a failure here, so this is not about
+  # the exit status — it is about saying why. ai-setup exits non-zero
+  # deliberately (a backup it will not destroy, a remote it could not clone),
+  # and bare errexit would end the run with no summary line, leaving its last
+  # message looking like one more note rather than the reason nothing installed.
+  # Testing the command in a condition also suspends errexit, so the message
+  # gets printed instead of the shell exiting first.
+  if ! "$DOTFILES_DIR/ai/bin/ai-setup"; then
+    err "ai-setup did not finish; no rules were written"
+    exit 1
+  fi
+}
+
 
 # ---- Dispatcher ---------------------------------------------
 for target in "${TARGETS[@]}"; do
@@ -161,7 +192,8 @@ for target in "${TARGETS[@]}"; do
     tmux)  install_tmux ;;
     vim)   install_vim ;;
     bash)  install_bash ;;
-    *)     err "unknown target: $target"; err "known: tmux vim bash"; exit 1 ;;
+    ai)    install_ai ;;
+    *)     err "unknown target: $target"; err "known: tmux vim bash ai"; exit 1 ;;
   esac
 done
 
