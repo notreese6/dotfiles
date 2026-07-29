@@ -98,9 +98,11 @@ class TestAiRulesCli(SandboxedTestCase):
         (self.fake_ai / "local_rules" / "10-first.md").write_text("LOCAL RULE ONE\n", encoding="utf-8")
         (self.fake_ai / "local_rules" / "20-second.md").write_text("LOCAL RULE TWO\n", encoding="utf-8")
 
-        airules.config_set("local_rules_dir", str(self.fake_ai / "local_rules"))
-        airules.config_set("agents", ["claude"])
-        airules.config_set("notes_enabled", False)
+        self.write_config(
+            local_rules_dir = str(self.fake_ai / "local_rules"),
+            agents          = ["claude"],
+            notes_enabled   = False,
+        )
 
     def run_cli(self, *args):
         """
@@ -272,7 +274,7 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertEqual(self.sandbox_backups(), [])
 
     def test_notes_enabled_keeps_nudge(self):
-        airules.config_set("notes_enabled", True)
+        self.write_config(notes_enabled=True)
         self.run_cli("apply")
         self.assertIn("NOTES SYNC", (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"))
 
@@ -287,7 +289,7 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertEqual(second.count(airules.LOCAL_END), 1)
 
     def test_multiple_agents(self):
-        airules.config_set("agents", ["claude", "codex"])
+        self.write_config(agents=["claude", "codex"])
         self.run_cli("apply")
         self.assertTrue((self.home / ".claude" / "CLAUDE.md").exists())
         self.assertTrue((self.home / ".codex" / "AGENTS.md").exists())
@@ -312,19 +314,19 @@ class TestAiRulesCli(SandboxedTestCase):
     def test_string_agents_match_equivalent_list(self):
         claude_md = self.home / ".claude" / "CLAUDE.md"
 
-        airules.config_set("agents", ["claude"])
+        self.write_config(agents=["claude"])
         self.assertEqual(self.run_cli("apply").returncode, 0)
         from_list = claude_md.read_text(encoding="utf-8")
 
         claude_md.unlink()
 
-        airules.config_set("agents", "claude")
+        self.write_config(agents="claude")
         result = self.run_cli("apply")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(claude_md.read_text(encoding="utf-8"), from_list)
 
     def test_string_agents_split_on_whitespace(self):
-        airules.config_set("agents", "claude codex")
+        self.write_config(agents="claude codex")
 
         result = self.run_cli("apply")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -332,7 +334,7 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertTrue((self.home / ".codex" / "AGENTS.md").exists())
 
     def test_unknown_agent_warns_naming_it(self):
-        airules.config_set("agents", ["claud"])
+        self.write_config(agents=["claud"])
 
         result = self.run_cli("apply")
 
@@ -342,7 +344,7 @@ class TestAiRulesCli(SandboxedTestCase):
             self.assertIn(name, result.stderr)
 
     def test_all_unknown_agents_exit_nonzero_and_write_nothing(self):
-        airules.config_set("agents", ["claud", "codexx"])
+        self.write_config(agents=["claud", "codexx"])
 
         result = self.run_cli("apply")
         self.assertNotEqual(result.returncode, 0)
@@ -351,7 +353,7 @@ class TestAiRulesCli(SandboxedTestCase):
             self.assertFalse(path.exists(), "%s should not have been written" % path)
 
     def test_mixed_agents_write_the_valid_one_and_warn(self):
-        airules.config_set("agents", ["claude", "bogus"])
+        self.write_config(agents=["claude", "bogus"])
 
         result = self.run_cli("apply")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -359,12 +361,12 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertIn("'bogus'", result.stderr)
 
     def test_no_known_agents_exits_3(self):
-        airules.config_set("agents", ["claud", "codexx"])
+        self.write_config(agents=["claud", "codexx"])
 
         self.assertEqual(self.run_cli("apply").returncode, 3)
 
     def test_empty_agents_list_exits_3_and_writes_nothing(self):
-        airules.config_set("agents", [])
+        self.write_config(agents=[])
 
         result = self.run_cli("apply")
         self.assertEqual(result.returncode, 3, result.stderr)
@@ -377,7 +379,7 @@ class TestAiRulesCli(SandboxedTestCase):
 
         for value, fragment in MALFORMED_AGENTS:
             with self.subTest(agents=value):
-                airules.config_set("agents", value)
+                self.write_config(agents=value)
 
                 result = self.run_cli("apply")
 
@@ -474,7 +476,7 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertEqual(airules.backup_path(claude_md).read_text(encoding="utf-8"), "STALE BACKUP\n")
 
     def test_refusal_leaves_every_target_untouched_not_just_the_blocked_one(self):
-        airules.config_set("agents", ["claude", "codex"])
+        self.write_config(agents=["claude", "codex"])
 
         targets = {
             self.home / ".claude" / "CLAUDE.md": "CLAUDE SENTINEL\n",
@@ -501,7 +503,7 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertEqual(self.sandbox_backups(), [blocked])
 
     def test_refusal_names_every_blocking_backup(self):
-        airules.config_set("agents", ["claude", "codex"])
+        self.write_config(agents=["claude", "codex"])
 
         blocked = []
         for relpath in ((".claude", "CLAUDE.md"), (".codex", "AGENTS.md")):
@@ -540,7 +542,7 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertTrue(claude_md.is_symlink())
 
     def test_every_target_is_a_link_to_one_assembled_file(self):
-        airules.config_set("agents", ["claude", "codex", "cursor"])
+        self.write_config(agents=["claude", "codex", "cursor"])
 
         result = self.run_cli("apply")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -576,7 +578,7 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertEqual(elsewhere.read_text(encoding="utf-8"), "# TRACKED ELSEWHERE\n")
 
     def test_paste_notice_fires_once_and_only_for_cursor(self):
-        airules.config_set("agents", ["claude", "codex", "cursor"])
+        self.write_config(agents=["claude", "codex", "cursor"])
 
         result = self.run_cli("apply")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -609,7 +611,7 @@ class TestAiRulesCli(SandboxedTestCase):
                       airules.assembled_path().read_text(encoding="utf-8"))
 
     def test_backup_notice_names_the_real_path_once_per_target(self):
-        airules.config_set("agents", ["claude", "codex"])
+        self.write_config(agents=["claude", "codex"])
 
         for relpath in ((".claude", "CLAUDE.md"), (".codex", "AGENTS.md")):
             path = self.home.joinpath(*relpath)
@@ -636,8 +638,8 @@ class TestAiRulesCli(SandboxedTestCase):
         cases = (
             ("missing universal",  lambda: universal.unlink()),
             ("empty universal",    lambda: universal.write_text("", encoding="utf-8")),
-            ("no known agents",    lambda: airules.config_set("agents", ["claud", "codexx"])),
-            ("bad agents setting", lambda: airules.config_set("agents", None)),
+            ("no known agents",    lambda: self.write_config(agents=["claud", "codexx"])),
+            ("bad agents setting", lambda: self.write_config(agents=None)),
         )
 
         for label, break_it in cases:
@@ -646,7 +648,7 @@ class TestAiRulesCli(SandboxedTestCase):
                 # the damage the previous one left behind
                 universal.write_text(UNIVERSAL, encoding="utf-8")
                 claude_md.write_text(PRIOR_RULES, encoding="utf-8")
-                airules.config_set("agents", ["claude"])
+                self.write_config(agents=["claude"])
 
                 break_it()
 
@@ -664,7 +666,7 @@ class TestAiRulesCli(SandboxedTestCase):
 
         # Every RulesRoot a supported agent resolves against — HOME and the
         # config directory — has to land inside the sandbox, so all three run
-        airules.config_set("agents", ["claude", "codex", "cursor"])
+        self.write_config(agents=["claude", "codex", "cursor"])
 
         result = self.run_cli("apply")
         self.assertEqual(result.returncode, 0, result.stderr)

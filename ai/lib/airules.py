@@ -1,6 +1,7 @@
+import datetime
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -29,9 +30,13 @@ LOCAL_RULES_GLOB    = "*.md"
 
 # The settings read out of the config file. Named because a mistyped key does
 # not fail — config_get quietly hands back the default instead.
-CONFIG_KEY_AGENTS          = "agents"
-CONFIG_KEY_LOCAL_RULES_DIR = "local_rules_dir"
-CONFIG_KEY_NOTES_ENABLED   = "notes_enabled"
+CONFIG_KEY_AGENTS             = "agents"
+CONFIG_KEY_AI_DIR             = "ai_dir"
+CONFIG_KEY_LOCAL_RULES_DIR    = "local_rules_dir"
+CONFIG_KEY_LOCAL_RULES_REMOTE = "local_rules_remote"
+CONFIG_KEY_NOTES_ENABLED      = "notes_enabled"
+CONFIG_KEY_NOTES_PATH         = "notes_path"
+CONFIG_KEY_UPDATED_AT         = "updated_at"
 
 # The environment variables this module honors, for the same reason: a mistyped
 # name reads as unset rather than as an error.
@@ -63,6 +68,8 @@ class ExitStatus(IntEnum):
             names, so it could not be read at all.
         BACKUP_EXISTS: a target's backup file is already there, so this run
             would have had to destroy it to take a new one. Nothing was written.
+        CLONE_FAILED: the configured local-rules remote could not be cloned, so
+            setup stopped before writing any settings.
     """
 
     OK                 = 0
@@ -70,6 +77,7 @@ class ExitStatus(IntEnum):
     NO_KNOWN_AGENTS    = 3
     BAD_AGENTS_SETTING = 4
     BACKUP_EXISTS      = 5
+    CLONE_FAILED       = 6
 
 
 class RulesRoot(Enum):
@@ -566,28 +574,252 @@ def _atomic_write(path, text):
             pass
 
 
-def config_set(key, value):
+def _config_write(data):
     """
-    Write one setting to the config file, creating it if needed.
+    Serialize the whole config mapping and swap it into place.
+
+    The single place this file's on-disk shape is decided — indentation, key
+    order, the trailing newline. Private because `Config.save` is meant to be
+    the only way a shipped tool writes this file: a second public writer is how
+    `updated_at`, which claims to say when the config was last saved, ends up
+    stale after someone changes a setting without going through the record.
 
     Args:
-        key (str): setting name.
-        value: any JSON-serializable value (str, bool, int, list, dict).
+        data (dict): every setting to write. Replaces the file's contents
+            entirely rather than merging, so callers pass the full mapping.
 
     Returns:
         None
 
     Raises:
-        OSError: the parent directory cannot be created, or the write or the
-            replace fails (e.g. permissions, read-only filesystem, no space).
-        TypeError: `value` is not JSON-serializable.
-        ValueError: the existing config file is not valid JSON.
+        OSError: the file or its directory cannot be written.
+        TypeError: a value is not JSON-serializable.
     """
 
-    data      = config_read()
-    data[key] = value
+    # sort_keys so an unrelated edit produces a one-line diff rather than
+    # reordering the file; the trailing newline keeps it a well-formed text file.
+    text = json.dumps(data, indent=2, sort_keys=True) + "\n"
 
-    _atomic_write(config_path(), json.dumps(data, indent=2, sort_keys=True) + "\n")
+    _atomic_write(config_path(), text)
+
+
+@dataclass
+class Config:
+    """
+    Every setting this system reads, as one record instead of loose keys.
+
+    Load it once and read attributes off it. `config_get` remains for a one-off
+    single key, but anything wanting more than one value should come through
+    here: it reads the file once rather than per key, and a misspelled attribute
+    is an AttributeError rather than a silently returned default — which is the
+    specific way a stringly-keyed config goes wrong.
+
+    Mutable on purpose. Reading, editing a field, and saving is the whole
+    working shape of `ai-setup`, and a frozen record would force a rebuild of
+    all seven fields to change one.
+
+    Args:
+        agents (list of str): agent names to write rules for, already normalized
+            from the string-or-list the file may hold.
+        ai_dir (pathlib.Path or None): the `ai/` directory rules are read from.
+            None when never recorded.
+        local_rules_dir (pathlib.Path or None): directory holding the private
+            `*.md` rules. None when unset; callers supply their own default,
+            since it depends on where `ai/` is.
+        local_rules_remote (str): git remote the private rules come from, or ""
+            when there is none.
+        notes_enabled (bool): whether the notes half of the system is on.
+        notes_path (pathlib.Path or None): where the daily-notes repo lives.
+        updated_at (str): when this config was last saved, UTC ISO-8601. Set by
+            save(); never written by hand.
+        extra (dict): any key in the file this class does not know about, kept
+            so an older tool cannot silently drop a newer tool's settings when
+            it saves.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    agents:             List[str]
+    ai_dir:             Optional[Path] = None
+    local_rules_dir:    Optional[Path] = None
+    local_rules_remote: str            = ""
+    notes_enabled:      bool           = False
+    notes_path:         Optional[Path] = None
+    updated_at:         str            = ""
+    extra:              dict           = field(default_factory=dict)
+
+    # The keys this class owns. Everything else in the file lands in `extra`,
+    # and listing them once is what keeps load() and save() from disagreeing.
+    OWNED_KEYS = (
+        CONFIG_KEY_AGENTS,
+        CONFIG_KEY_AI_DIR,
+        CONFIG_KEY_LOCAL_RULES_DIR,
+        CONFIG_KEY_LOCAL_RULES_REMOTE,
+        CONFIG_KEY_NOTES_ENABLED,
+        CONFIG_KEY_NOTES_PATH,
+        CONFIG_KEY_UPDATED_AT,
+    )
+
+    @classmethod
+    def load(cls):
+        """
+        Read the whole config file into one record.
+
+        Args:
+            None
+
+        Returns:
+            Config: the settings on disk. Every field carries its documented
+            default where the file says nothing, so a missing file yields a
+            usable record rather than an error.
+
+        Raises:
+            BadAgentsError: the `agents` setting is neither a name nor a list of
+                names.
+            OSError: the config file exists but cannot be read.
+            ValueError: the config file is not valid JSON.
+        """
+
+        data = config_read()
+
+        return cls(
+            agents             = _agent_names(data.get(CONFIG_KEY_AGENTS, ["claude"])),
+            ai_dir             = _as_path(data.get(CONFIG_KEY_AI_DIR)),
+            local_rules_dir    = _as_path(data.get(CONFIG_KEY_LOCAL_RULES_DIR)),
+            local_rules_remote = data.get(CONFIG_KEY_LOCAL_RULES_REMOTE, ""),
+            notes_enabled      = bool(data.get(CONFIG_KEY_NOTES_ENABLED, False)),
+            notes_path         = _as_path(data.get(CONFIG_KEY_NOTES_PATH)),
+            updated_at         = data.get(CONFIG_KEY_UPDATED_AT, ""),
+            extra              = {k: v for k, v in data.items() if k not in cls.OWNED_KEYS},
+        )
+
+    def save(self):
+        """
+        Write every field back to the config file, stamping the save time.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            OSError: the config file or its directory cannot be written.
+            TypeError: a value in `extra` is not JSON-serializable.
+        """
+
+        # UTC and second-resolution, so the stamp sorts and compares the same on
+        # every machine. timezone.utc rather than utcnow(), which is deprecated
+        # and hands back a naive datetime that reads as local time.
+        self.updated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        data = dict(self.extra)
+        data.update({
+            CONFIG_KEY_AGENTS:             list(self.agents),
+            CONFIG_KEY_LOCAL_RULES_REMOTE: self.local_rules_remote,
+            CONFIG_KEY_NOTES_ENABLED:      self.notes_enabled,
+            CONFIG_KEY_UPDATED_AT:         self.updated_at,
+        })
+
+        # Paths go out as strings, and an unset one is left out entirely rather
+        # than written as null, so absent and "explicitly nothing" stay distinct.
+        for key, value in ((CONFIG_KEY_AI_DIR,          self.ai_dir),
+                           (CONFIG_KEY_LOCAL_RULES_DIR, self.local_rules_dir),
+                           (CONFIG_KEY_NOTES_PATH,      self.notes_path)):
+            if value is not None:
+                data[key] = str(value)
+
+        _config_write(data)
+
+    def describe(self):
+        """
+        Render the settings as aligned label/value lines for a caller to print.
+
+        Returns lines rather than printing them, so this module stays free of
+        stdout and each CLI puts its own tag in front.
+
+        Args:
+            None
+
+        Returns:
+            list: [str] one "label: value" line per setting, in a fixed order,
+            with the values aligned in a column. Never empty.
+
+        Raises:
+            None
+        """
+
+        rows = (
+            ("rules source",       self.ai_dir),
+            ("agents",             " ".join(self.agents)),
+            ("local rules dir",    self.local_rules_dir),
+            ("local rules remote", self.local_rules_remote),
+            ("notes path",         self.notes_path),
+            ("notes enabled",      self.notes_enabled),
+            ("config file",        config_path()),
+        )
+        width = max(len(label) for label, _ in rows)
+
+        return [f"{label + ':':<{width + 1}} {value if value not in (None, '') else '(none)'}"
+                for label, value in rows]
+
+
+def _as_path(value):
+    """
+    Turn a config value into a Path, leaving an absent one absent.
+
+    Args:
+        value (str or None): the stored setting.
+
+    Returns:
+        pathlib.Path or None: the path, or None when `value` is None or an empty
+        string — an empty path would silently resolve to the current directory.
+
+    Raises:
+        TypeError: `value` is neither a string nor None.
+    """
+
+    return Path(value) if value else None
+
+
+def _agent_names(names):
+    """
+    Normalize the `agents` setting into a list of names.
+
+    Args:
+        names (str or list): the setting as the file stored it. A bare string is
+            one name, or several separated by whitespace.
+
+    Returns:
+        list: [str] the names, in the order given.
+
+    Raises:
+        BadAgentsError: `names` is not a string or a list, or a list holds a
+            non-string. Both reach the write path as a bare TypeError from deep
+            inside it otherwise.
+    """
+
+    # A bare string is one agent name, or several separated by whitespace
+    if isinstance(names, str):
+        return names.split()
+
+    # null, a number, or an object here would reach list() and raise a bare
+    # TypeError from the middle of the write path; a JSON list is the only other
+    # shape this setting can legitimately take.
+    if not isinstance(names, (list, tuple)):
+        raise BadAgentsError(names)
+
+    for name in names:
+        # A non-string element survives the SUPPORTED_AGENTS lookup as "unknown"
+        # and only blows up later, when the names are joined into a message
+        if not isinstance(name, str):
+            raise BadAgentsError(name)
+
+    return list(names)
 
 
 def _line_marker_index(text, marker, start=0, should_use_last=False):
@@ -820,11 +1052,10 @@ def configured_agents():
     """
     Read the `agents` setting as a list of names.
 
-    A hand-edited config often carries `"agents": "claude"` where a list was
-    meant. Iterating that string yields single characters, none of which is an
-    agent name, so the whole run silently writes nothing. The string form is
-    unambiguous, so it is normalized here — once, for every caller — rather than
-    at each call site.
+    A thin wrapper over Config.load().agents, kept because reading only the
+    agent names is a common enough need to deserve a name of its own. Anything
+    wanting a second setting should load the Config once instead of calling
+    this and then reaching for another key.
 
     Args:
         None
@@ -843,25 +1074,7 @@ def configured_agents():
             ValueError too, so catch it first to tell the two apart.
     """
 
-    names = config_get(CONFIG_KEY_AGENTS, ["claude"])
-
-    # A bare string is one agent name, or several separated by whitespace
-    if isinstance(names, str):
-        return names.split()
-
-    # null, a number, or an object here would reach list() and raise a bare
-    # TypeError from the middle of the write path; a JSON list is the only other
-    # shape this setting can legitimately take.
-    if not isinstance(names, (list, tuple)):
-        raise BadAgentsError(names)
-
-    for name in names:
-        # A non-string element survives the SUPPORTED_AGENTS lookup as "unknown"
-        # and only blows up later, when the names are joined into a message
-        if not isinstance(name, str):
-            raise BadAgentsError(name)
-
-    return list(names)
+    return Config.load().agents
 
 
 def agent_targets(names):
@@ -1131,7 +1344,11 @@ def apply_rules(base_dir):
     if not universal_text.strip():
         raise EmptyRulesError(universal_path)
 
-    resolved = agent_targets(configured_agents())
+    # Loaded once for the whole run. Three separate config_get calls re-read and
+    # re-parsed the same file three times, and could disagree if it changed
+    # underneath them mid-run.
+    config   = Config.load()
+    resolved = agent_targets(config.agents)
 
     # Writing zero files and returning normally reads as success at the exit
     # status, which is the failure this raise exists to make visible. Checked
@@ -1149,10 +1366,11 @@ def apply_rules(base_dir):
     if blocked:
         raise BackupExistsError(blocked)
 
-    local_dir     = config_get(CONFIG_KEY_LOCAL_RULES_DIR, str(base / LOCAL_RULES_DIRNAME))
-    notes_enabled = config_get(CONFIG_KEY_NOTES_ENABLED, False)
+    # The default depends on where ai/ is, which Config has no way to know, so
+    # the fallback is supplied here rather than baked into the record.
+    local_dir = config.local_rules_dir or base / LOCAL_RULES_DIRNAME
 
-    text    = assemble(universal_text, read_local_rules(local_dir), notes_enabled)
+    text    = assemble(universal_text, read_local_rules(local_dir), config.notes_enabled)
     written = []
 
     # Written before the links so no agent path ever points at a file that is

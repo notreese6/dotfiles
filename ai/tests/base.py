@@ -7,6 +7,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
+import airules
+
 _ENV_KEYS = ("HOME", "XDG_CONFIG_HOME")
 
 
@@ -86,3 +88,33 @@ class SandboxedTestCase(unittest.TestCase):
 
         os.environ["HOME"]            = str(self.home)
         os.environ["XDG_CONFIG_HOME"] = str(self.xdg)
+
+    def write_config(self, **settings):
+        """
+        Put settings straight into the sandboxed config file.
+
+        A fixture, not an API a shipped tool should reach for: airules.Config is
+        the only supported way to write this file, so that `updated_at` cannot
+        go stale. This bypasses it on purpose, which is what lets a test set up
+        states Config cannot represent — a malformed `agents`, or a value that
+        will not serialize.
+
+        Args:
+            **settings: keys to write, merged over whatever is already in the
+                file rather than replacing it. Values may be any JSON type, and
+                deliberately may be invalid, so error paths can be exercised.
+
+        Returns:
+            None
+
+        Raises:
+            OSError: the config file or its directory cannot be written.
+            TypeError: a value is not JSON-serializable. Left to propagate, so a
+                test can assert on it.
+            ValueError: the existing config file is not valid JSON.
+        """
+
+        data = airules.config_read()
+        data.update(settings)
+
+        airules._config_write(data)

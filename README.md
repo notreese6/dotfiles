@@ -123,8 +123,15 @@ Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled fr
 
 - `ai/AGENTS.md` — the universal, shareable rules. Edit these in one place; every agent gets them.
 - `ai/local_rules/` — the private, per-context layer (work-specific rules, internal conventions). **The directory is tracked but its contents are ignored**, so the layer exists on every clone and never reaches this repo. Drop `*.md` files in and they get merged in locally.
-- `ai/lib/`, `ai/bin/` — the assembler that merges the two layers into each agent's rules file, plus its setup command.
+- `ai/lib/`, `ai/bin/` — the assembler and its setup command.
 - `ai/tests/` — `python3 -m unittest discover -s ai/tests -t ai/tests`
+
+The two commands:
+
+- `ai-setup` — asks where things live (private rules remote, which agents, notes path), writes the answers to `~/.config/ai-notes/config.json`, then runs `ai-rules apply`. Re-running it edits settings: every prompt is pre-filled with what is already configured, so pressing enter keeps it. `--dry-run` reports what it would write and stops. Non-interactive when stdin is not a terminal, which is how `install.sh` drives it.
+- `ai-rules apply` — merges the two layers into **one** file at `~/.config/ai-notes/rules.md` and symlinks each agent's rules path to it, so nothing is duplicated and the agents cannot drift apart.
+
+Anything already at an agent's path that this tool did not put there is copied to `<path>.bak` first. That backup is written once and never overwritten — if one is already there the run stops and says so, because it holds the only copy of whatever was there before, while the assembled file can be rebuilt from the sources at any time. Remove it yourself once you are happy.
 
 ## Troubleshooting
 

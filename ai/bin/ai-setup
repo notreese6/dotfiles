@@ -1,0 +1,408 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+
+# macOS gates these three folders and iCloud Drive through TCC, independently of
+# Unix permissions, and denies a non-interactive process silently. Notes kept
+# under one of them break agents and cron jobs in a way that produces no error.
+TCC_DIRNAMES  = ("Documents", "Desktop", "Downloads")
+ICLOUD_MARKER = os.path.join("Library", "Mobile Documents")
+
+# The answers this tool accepts from the environment, so a provisioning script or
+# a test can drive it with no terminal. Named for the same reason as the config
+# keys: a mistyped one reads as unset rather than failing.
+ENV_NONINTERACTIVE     = "AI_SETUP_NONINTERACTIVE"
+ENV_AGENTS             = "AI_SETUP_AGENTS"
+ENV_LOCAL_RULES_DIR    = "AI_SETUP_LOCAL_RULES_DIR"
+ENV_LOCAL_RULES_REMOTE = "AI_SETUP_LOCAL_RULES_REMOTE"
+ENV_NOTES_PATH         = "AI_SETUP_NOTES_PATH"
+
+NOTES_DIRNAME = "daily-notes"
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser. A bare invocation is
+        valid and runs setup, unlike `ai-rules`, because setup is the whole
+        point of the command rather than one of several things it could do.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="ai-setup",
+        description="Configure the AI rules layering and assemble each agent's rules.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report the settings that would be written, then stop without touching anything",
+    )
+
+    return parser
+
+
+def is_noninteractive():
+    """
+    Say whether this run must not stop to ask the user anything.
+
+    Args:
+        None
+
+    Returns:
+        bool: True when the environment variable forces it, or when stdin is not
+        a terminal — a pipe, a cron job, or a test harness. False when there is
+        someone there to answer.
+
+    Raises:
+        None
+    """
+
+    if os.environ.get(ENV_NONINTERACTIVE) == "true":
+        return True
+
+    return not sys.stdin.isatty()
+
+
+def ask(question, default, env_key):
+    """
+    Get one answer from the environment, the user, or the default.
+
+    Args:
+        question (str): the prompt text, without the default or punctuation.
+        default (str): used when the user answers with a bare newline, and as
+            the whole answer when this run cannot prompt.
+        env_key (str): environment variable that overrides both. An empty value
+            counts as an answer of "none", not as unset, so a remote can be
+            cleared non-interactively.
+
+    Returns:
+        str: the answer, stripped of surrounding whitespace.
+
+    Raises:
+        OSError: stdin cannot be read, or the prompt cannot be written.
+    """
+
+    override = os.environ.get(env_key)
+    if override is not None:
+        return override.strip()
+
+    if is_noninteractive():
+        return default
+
+    # Shown in brackets so pressing enter is visibly the same as re-choosing what
+    # is already configured, which is what makes a re-run an edit rather than a
+    # fresh start.
+    answer = input(f"{question} [{default}]: ").strip()
+
+    return answer if answer else default
+
+
+def detect_agents(home):
+    """
+    Guess which agents are installed, to pre-fill the agents prompt.
+
+    Args:
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        str: space-separated agent names whose directories exist, in
+        SUPPORTED_AGENTS order. Falls back to "claude" when none is found, so
+        the prompt always offers something valid.
+
+    Raises:
+        OSError: a candidate directory cannot be inspected.
+    """
+
+    found = [name for name in airules.known_agent_names() if (home / f".{name}").is_dir()]
+
+    return " ".join(found) if found else "claude"
+
+
+def is_tcc_protected(notes_path, home):
+    """
+    Say whether a path sits somewhere macOS gates behind TCC.
+
+    Args:
+        notes_path (pathlib.Path): the path to judge.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        bool: True when the path is directly under ~/Documents, ~/Desktop,
+        ~/Downloads, or an iCloud Drive directory. False otherwise, including
+        for any path outside the home directory.
+
+    Raises:
+        None
+    """
+
+    # iCloud is checked against the whole path: it is gated the same way but is
+    # not one of the three folder names, so the list alone would miss it.
+    if ICLOUD_MARKER in str(notes_path):
+        return True
+
+    try:
+        relative = notes_path.resolve().relative_to(home.resolve())
+    except ValueError:
+        # Outside HOME entirely, so none of the per-user folders can apply.
+        # relative_to raises rather than returning None, and letting that escape
+        # would reject a perfectly good path like /srv/notes with a traceback.
+        return False
+
+    return bool(relative.parts) and relative.parts[0] in TCC_DIRNAMES
+
+
+def warn_if_tcc(notes_path, home):
+    """
+    Warn when the chosen notes path is one macOS will silently block.
+
+    Args:
+        notes_path (pathlib.Path): the path the user chose.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    if not is_tcc_protected(notes_path, home):
+        return
+
+    # [!] rather than [-]: nothing has failed, which is exactly the problem. A
+    # TCC denial in a cron or agent context returns EPERM with no prompt and no
+    # log, so notes silently stop syncing and the setup that caused it looks
+    # like it succeeded. That is the "silently misleading state" [!] is for.
+    folders = ", ".join(TCC_DIRNAMES)
+    print(f"[!] {notes_path} is inside a macOS-restricted folder ({folders}, or iCloud). Agents and "
+          f"non-interactive tools can be denied access there with no error at all — "
+          f"~/{NOTES_DIRNAME} avoids it", file=sys.stderr)
+
+
+def gather(base, home):
+    """
+    Collect every setting, from the environment or the user, without writing.
+
+    Each default is the value already in the config, so a re-run edits settings
+    rather than resetting them, and an unanswered prompt changes nothing.
+
+    Args:
+        base (pathlib.Path): the `ai/` directory this tool was run from.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        airules.Config: the record loaded from disk with this run's answers
+            applied. Nothing has been written or cloned yet.
+
+    Raises:
+        BadAgentsError: the stored `agents` setting is neither a name nor a list
+            of names.
+        OSError: stdin cannot be read, or a candidate directory cannot be
+            inspected.
+        ValueError: the config file is not valid JSON.
+    """
+
+    # Loaded rather than built from scratch, so every setting this tool does not
+    # ask about — notes_enabled today, anything a later tool adds — survives the
+    # save untouched instead of being reset to a default.
+    config = airules.Config.load()
+
+    config.local_rules_remote = ask(
+        "Private local-rules git remote (blank = none)",
+        config.local_rules_remote,
+        ENV_LOCAL_RULES_REMOTE,
+    )
+    config.agents = ask(
+        f"Agent targets, space-separated ({', '.join(airules.known_agent_names())})",
+        " ".join(config.agents) or detect_agents(home),
+        ENV_AGENTS,
+    ).split()
+    config.notes_path = Path(ask(
+        "Daily-notes path",
+        str(config.notes_path or home / NOTES_DIRNAME),
+        ENV_NOTES_PATH,
+    ))
+
+    config.ai_dir          = base
+    config.local_rules_dir = Path(
+        os.environ.get(ENV_LOCAL_RULES_DIR)
+        or config.local_rules_dir
+        or base / airules.LOCAL_RULES_DIRNAME
+    )
+
+    return config
+
+
+def is_bare(directory):
+    """
+    Say whether a directory is free for a clone to land in.
+
+    Args:
+        directory (pathlib.Path): the candidate clone target.
+
+    Returns:
+        bool: True when the directory is absent, empty, or holds nothing but the
+        `.gitignore` that ships the otherwise-empty directory in this repo.
+        False when it holds anything else, which is taken as rules already
+        there.
+
+    Raises:
+        OSError: the directory exists but cannot be listed.
+    """
+
+    if not directory.is_dir():
+        return True
+
+    # The placeholder does not count as occupancy: without this the shipped
+    # local_rules/ is never bare, and a configured remote would never be used.
+    return all(entry.name == ".gitignore" for entry in directory.iterdir())
+
+
+def clone_local_rules(remote, local_dir):
+    """
+    Clone the private rules repo into the local-rules directory.
+
+    Cloned to a scratch sibling and moved in, because git refuses to clone into
+    a directory that already holds anything — including the `.gitignore` that
+    ships this one.
+
+    Args:
+        remote (str): the git remote to clone. Must be non-empty.
+        local_dir (pathlib.Path): the directory to end up holding the clone.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: the scratch directory or the moves fail.
+        subprocess.CalledProcessError: git is missing, or the clone fails (a bad
+            URL, no access, no network).
+    """
+
+    scratch = local_dir.with_name(f"{local_dir.name}.{os.getpid()}.clone")
+
+    print(f"[*] cloning {remote} into {local_dir}")
+    try:
+        subprocess.run(["git", "clone", "--quiet", remote, str(scratch)], check=True)
+
+        local_dir.mkdir(parents=True, exist_ok=True)
+        for entry in scratch.iterdir():
+            shutil.move(str(entry), str(local_dir / entry.name))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def apply_rules(base):
+    """
+    Run the sibling `ai-rules apply` to assemble and link the rules.
+
+    Args:
+        base (pathlib.Path): the `ai/` directory holding `bin/ai-rules`.
+
+    Returns:
+        int: the exit status ai-rules returned, passed straight up so a refusal
+        to overwrite a backup is not reported here as a successful setup.
+
+    Raises:
+        OSError: `ai-rules` is missing or is not executable.
+    """
+
+    command = [str(base / "bin" / "ai-rules"), "apply"]
+
+    return subprocess.run(command, env=dict(os.environ, AI_DIR=str(base))).returncode
+
+
+def run_setup(should_write):
+    """
+    Collect the settings and, unless this is a dry run, apply them.
+
+    Args:
+        should_write (bool): False to report the settings and stop, changing
+            nothing on disk.
+
+    Returns:
+        airules.ExitStatus or int: OK when setup finished, whatever `ai-rules`
+        returned when it did not, and OK for a dry run.
+
+    Raises:
+        OSError: stdin, stdout, or a directory cannot be read or written.
+        ValueError: the config file is not valid JSON.
+    """
+
+    home = Path(os.path.expanduser("~"))
+    base = airules.ai_dir(__file__)
+
+    config = gather(base, home)
+
+    # The tag lives here rather than in describe(), which returns lines so the
+    # library stays free of stdout and each CLI labels them its own way.
+    for line in config.describe():
+        print(f"[*] {line}")
+
+    warn_if_tcc(config.notes_path, home)
+
+    if not should_write:
+        print("[*] dry run, nothing was written")
+        return airules.ExitStatus.OK
+
+    if config.local_rules_remote and is_bare(config.local_rules_dir):
+        try:
+            clone_local_rules(config.local_rules_remote, config.local_rules_dir)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"[-] could not clone {config.local_rules_remote}: {exc}", file=sys.stderr)
+            print("[-] nothing was written; fix the remote or clear the setting to continue",
+                  file=sys.stderr)
+            return airules.ExitStatus.CLONE_FAILED
+
+    config.save()
+
+    status = apply_rules(base)
+    if status != airules.ExitStatus.OK:
+        return status
+
+    print(f"[+] setup complete, config written to {airules.config_path()}")
+
+    return airules.ExitStatus.OK
+
+
+def main():
+    """
+    Run the ai-setup command line.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus or int: process exit status.
+
+    Raises:
+        SystemExit: the arguments are invalid or `--help` was requested.
+            argparse exits 2 for a usage error and this function is never
+            reached.
+        OSError: stdin, stdout, or a directory cannot be read or written.
+        ValueError: the config file is not valid JSON.
+    """
+
+    parser = build_parser()
+    args   = parser.parse_args()
+
+    return run_setup(should_write=not args.dry_run)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
