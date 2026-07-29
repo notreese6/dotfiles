@@ -157,6 +157,22 @@ class TestAssemble(SandboxedTestCase):
         self.assertNotIn("EDITOR BACKUP", out)
         self.assertNotIn("binary junk", out)
 
+    def test_read_local_rules_skips_a_readme(self):
+        d = self._local_dir(**{
+            "10-real.md": "REAL RULE\n",
+            "README.md":  "# my-rules\n\nTo push to this repo, run git push.\n",
+            "readme.md":  "lowercase variant\n",
+        })
+
+        out = airules.read_local_rules(d)
+
+        # A repo created through a web UI ships a boilerplate README. It is
+        # markdown, so without this it lands in the rules and the agent reads
+        # "to push to this repo, run git push" as an instruction.
+        self.assertIn("REAL RULE", out)
+        self.assertNotIn("git push", out)
+        self.assertNotIn("lowercase variant", out)
+
     def test_read_local_rules_round_trips_non_ascii(self):
         body = "Rule — with an em dash\n"
         d    = self._local_dir(**{"10-dash.md": body})

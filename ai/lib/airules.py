@@ -28,6 +28,13 @@ UNIVERSAL_NAME      = "AGENTS.md"
 LOCAL_RULES_DIRNAME = "local_rules"
 LOCAL_RULES_GLOB    = "*.md"
 
+# A README in the local-rules directory documents the directory; it is not a
+# rule. Skipped by name because it is markdown like everything else and would
+# otherwise be concatenated into the rules verbatim — which is exactly what
+# happens when the directory is a repo created through a web UI, since those
+# ship a boilerplate README describing how to push to the repo.
+LOCAL_RULES_SKIP = ("readme.md",)
+
 # The settings read out of the config file. Named because a mistyped key does
 # not fail — config_get quietly hands back the default instead.
 CONFIG_KEY_AGENTS             = "agents"
@@ -934,6 +941,8 @@ def read_local_rules(local_dir):
     Returns:
         str: the files' contents in sorted() filename order, separated by a
         blank line, or "" when the directory is absent or holds no `.md` files.
+        Any file named in LOCAL_RULES_SKIP is left out — a README there
+        describes the directory rather than instructing an agent.
 
     Raises:
         OSError: the directory exists but one of its files cannot be read.
@@ -946,6 +955,10 @@ def read_local_rules(local_dir):
 
     parts = []
     for path in sorted(directory.glob(LOCAL_RULES_GLOB)):
+        # Compared lowercased so README.md, readme.md and README.MD all skip
+        if path.name.lower() in LOCAL_RULES_SKIP:
+            continue
+
         # Pinned to utf-8 rather than the locale default: under LC_ALL=C that
         # default is ASCII, and these files carry em-dashes and curly quotes.
         body = path.read_text(encoding="utf-8")

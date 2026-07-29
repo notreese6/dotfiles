@@ -84,10 +84,23 @@ Required:
 
 - `tmux` 3.1 or newer (`brew install tmux`)
 - `git` (for cloning TPM and the repo itself)
+- `python3` 3.7 or newer — the `ai` tooling is Python, stdlib only, no packages to install
 
 Recommended (used by some configs but not strictly required):
 
 - `eza` — pretty file listings (`brew install eza`)
+
+### Before running the `ai` target
+
+Nothing has to exist up front — `./install.sh ai` works on a bare machine and asks for the rest. What it asks, and what you need ready if you want to answer it:
+
+| Prompt | Needed beforehand | If you skip it |
+|---|---|---|
+| Private local-rules git remote | A repo you can clone over SSH, and working SSH auth to that host | Leave blank. The universal rules still apply; drop `*.md` files into `ai/local_rules/` by hand instead |
+| Agent targets | Nothing | Defaults to the agents whose directories already exist (`~/.claude`, `~/.codex`), falling back to `claude` |
+| Daily-notes path | Nothing yet — the sync tooling is not built | Defaults to `~/daily-notes`. It is recorded in the config and otherwise unused for now |
+
+The private rules remote is only cloned when the local-rules directory is empty, so an existing `ai/local_rules/*.md` always wins over the remote — a clone can never overwrite rules that exist nowhere else. Clear the directory if you want the remote to take over.
 
 ## Per-tool notes
 
@@ -122,7 +135,7 @@ Recommended (used by some configs but not strictly required):
 Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled from two layers so one set of rules can be reused everywhere without leaking anything private.
 
 - `ai/AGENTS.md` — the universal, shareable rules. Edit these in one place; every agent gets them.
-- `ai/local_rules/` — the private, per-context layer (work-specific rules, internal conventions). **The directory is tracked but its contents are ignored**, so the layer exists on every clone and never reaches this repo. Drop `*.md` files in and they get merged in locally.
+- `ai/local_rules/` — the private, per-context layer (work-specific rules, internal conventions). **The directory is tracked but its contents are ignored**, so the layer exists on every clone and never reaches this repo. Drop `*.md` files in and they get merged in locally, in filename order — prefix them (`10-`, `20-`) to control that order. **`README.md` is skipped**, so the directory can document itself without the documentation becoming instructions; this matters because a repo created through a web UI ships a boilerplate README, and it is markdown like everything else.
 - `ai/lib/`, `ai/bin/` — the assembler and its setup command.
 - `ai/tests/` — `python3 -m unittest discover -s ai/tests -t ai/tests`
 
