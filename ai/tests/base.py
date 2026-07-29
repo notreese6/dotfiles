@@ -11,7 +11,8 @@ _ENV_KEYS = ("HOME", "XDG_CONFIG_HOME")
 
 
 def _restore_env(saved):
-    """Restore environment variables to a previously captured state.
+    """
+    Restore environment variables to a previously captured state.
 
     A key whose saved value is None was absent originally and is removed rather
     than set to an empty string, so callers cannot tell the sandbox ever ran.
@@ -26,6 +27,7 @@ def _restore_env(saved):
     Raises:
         None
     """
+
     for key, value in saved.items():
         if value is None:
             os.environ.pop(key, None)
@@ -34,7 +36,8 @@ def _restore_env(saved):
 
 
 class SandboxedTestCase(unittest.TestCase):
-    """Base test case that redirects HOME into a throwaway directory.
+    """
+    Base test case that redirects HOME into a throwaway directory.
 
     Every test inheriting from this runs against a temp HOME and
     XDG_CONFIG_HOME, so nothing under test can read or overwrite the real
@@ -49,7 +52,8 @@ class SandboxedTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        """Point HOME and XDG_CONFIG_HOME at a fresh temp directory.
+        """
+        Point HOME and XDG_CONFIG_HOME at a fresh temp directory.
 
         Restoration and temp-directory removal are registered via addCleanup, so
         they still run if a subclass overrides tearDown without calling super()
@@ -64,6 +68,7 @@ class SandboxedTestCase(unittest.TestCase):
         Raises:
             OSError: the temp directory cannot be created.
         """
+
         self.repo      = REPO_ROOT
         self.real_home = Path(os.path.expanduser("~"))
 

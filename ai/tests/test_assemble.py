@@ -12,7 +12,8 @@ UNIVERSAL = (
 
 
 def _converge(universal, local_text, rounds=4, notes_enabled=False):
-    """Apply assemble() repeatedly, feeding each result back in as the universal.
+    """
+    Apply assemble() repeatedly, feeding each result back in as the universal.
 
     Args:
         universal (str): starting universal rules text.
@@ -27,6 +28,7 @@ def _converge(universal, local_text, rounds=4, notes_enabled=False):
     Raises:
         None
     """
+
     outs = []
     text = universal
 
@@ -38,10 +40,13 @@ def _converge(universal, local_text, rounds=4, notes_enabled=False):
 
 
 class TestAssemble(SandboxedTestCase):
-    """Covers marker stripping, local-rules reading, and rules assembly."""
+    """
+    Covers marker stripping, local-rules reading, and rules assembly.
+    """
 
     def _local_dir(self, **files):
-        """Create a local-rules directory under the sandboxed HOME.
+        """
+        Create a local-rules directory under the sandboxed HOME.
 
         Args:
             **files: {str: str} mapping file name to file body. Written into the
@@ -53,6 +58,7 @@ class TestAssemble(SandboxedTestCase):
         Raises:
             OSError: the directory or one of the files cannot be written.
         """
+
         d = self.home / "local_rules"
         d.mkdir(parents=True, exist_ok=True)
         for name, body in files.items():
@@ -126,12 +132,30 @@ class TestAssemble(SandboxedTestCase):
         self.assertNotIn("trailing junk", out)
 
     def test_read_local_rules_sorted(self):
-        d = self._local_dir(**{"20-second.md": "TWO\n", "10-first.md": "ONE\n"})
+        d   = self._local_dir(**{"20-second.md": "TWO\n", "10-first.md": "ONE\n"})
         out = airules.read_local_rules(d)
         self.assertLess(out.index("ONE"), out.index("TWO"))
 
     def test_read_local_rules_empty_when_absent(self):
         self.assertEqual(airules.read_local_rules(self.home / "nope"), "")
+
+    def test_read_local_rules_reads_only_markdown(self):
+        d = self._local_dir(**{
+            "10-real.md":   "REAL RULE\n",
+            "notes.txt":    "NOT A RULE\n",
+            "20-old.md~":   "EDITOR BACKUP\n",
+            ".DS_Store":    "\x00\x01binary junk\n",
+        })
+
+        out = airules.read_local_rules(d)
+
+        # Anything but *.md is someone else's file. Concatenating a stray note or
+        # an editor backup would put it in every agent's rules, and a binary one
+        # would fail the read outright.
+        self.assertIn("REAL RULE", out)
+        self.assertNotIn("NOT A RULE", out)
+        self.assertNotIn("EDITOR BACKUP", out)
+        self.assertNotIn("binary junk", out)
 
     def test_read_local_rules_round_trips_non_ascii(self):
         body = "Rule — with an em dash\n"

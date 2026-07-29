@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser. Each subcommand sets a `run`
+        default holding the function that carries it out, so the caller
+        dispatches without re-checking the command name. The subcommand is
+        required, so argparse rejects a bare invocation itself.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="ai-rules",
+        description="Assemble each configured agent's rules file from the universal and local layers.",
+    )
+
+    # required=True makes a bare invocation argparse's own usage error rather
+    # than a command this tool has to guess at.
+    commands      = parser.add_subparsers(dest="command", metavar="command", required=True)
+    apply_command = commands.add_parser("apply", help="write the assembled rules to every configured agent")
+    apply_command.set_defaults(run=run_apply)
+
+    return parser
+
+
+def warn_unknown_agents(unknown):
+    """
+    Report configured agent names that this tool does not recognize.
+
+    Args:
+        unknown (list of str): names with no entry in airules.SUPPORTED_AGENTS.
+            An empty list prints nothing.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    valid = ", ".join(airules.known_agent_names())
+
+    for name in unknown:
+        # !r quotes the name, so a typo like 'claud' is not read as prose
+        print(f"[-] unknown agent {name!r} in the 'agents' setting, skipped (valid: {valid})", file=sys.stderr)
+
+
+def report_blocking_backups(backups):
+    """
+    Report the backup files that stopped the run, and how to clear them.
+
+    Args:
+        backups (list of pathlib.Path): the backups already in place. Must hold
+            at least one path, since an empty list would print a refusal with
+            nothing named in it.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    for backup in backups:
+        print(f"[-] backup already exists, refusing to overwrite it: {backup}", file=sys.stderr)
+
+    # The backup holds the rules from before this tool first ran and cannot be
+    # rebuilt, so say what is in it rather than making its removal sound routine.
+    print("[-] nothing was written; these hold the rules each file had before "
+          "ai-rules first wrote to it, so read them before removing them to continue",
+          file=sys.stderr)
+
+
+def report_written(written):
+    """
+    Report each rules file written, its backup, and any manual step left.
+
+    Args:
+        written (list of airules.WrittenRules): one record per file written,
+            whose `.backup` is None when that target did not exist beforehand.
+            An empty list prints nothing.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdout cannot be written.
+    """
+
+    for record in written:
+        print(f"[+] linked {record.target}")
+
+        # None whenever there was nothing worth preserving — the path was absent,
+        # or was already our link. Not called disposable: this holds the rules
+        # that were there before and is the only copy of them. Says apply will
+        # never overwrite it, not that the next run stops — once the target is
+        # our link there is nothing left to back up, so it does not.
+        if record.backup is not None:
+            print(f"[*] the rules that were there are saved at {record.backup} — the only copy, "
+                  "and apply will never overwrite it")
+
+        # True for an agent that reads its rules out of its own settings UI, not
+        # off disk, so writing the file is only half the job — say where to paste
+        # it from. Asked of the agent record rather than of its name, so a new
+        # agent needing the same follow-up gets it by setting the flag in
+        # airules.SUPPORTED_AGENTS, with nothing to change here.
+        if record.agent.needs_manual_paste:
+            print(f"[*] cursor global rules are settings-only — paste {record.target} into "
+                  "Cursor > Settings > Rules > User Rules")
+
+
+def run_apply():
+    """
+    Assemble the rules and write them to every configured agent.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus: OK on success; NO_UNIVERSAL_RULES when the
+        universal rules file is missing or empty; NO_KNOWN_AGENTS when no
+        configured agent is recognized, so nothing was written;
+        BAD_AGENTS_SETTING when the `agents` setting is not a name or a list of
+        names; BACKUP_EXISTS when a target's backup is already in place, so a
+        new one could not be taken without destroying it.
+
+    Raises:
+        OSError: a target directory cannot be created, or a read or write
+            fails (e.g. permissions, read-only filesystem, no space).
+        ValueError: the config file is not valid JSON.
+        UnicodeDecodeError: a rules file is not valid UTF-8.
+    """
+
+    base = airules.ai_dir(__file__)
+
+    # A stale AI_DIR silently sources the rules from a moved or renamed clone,
+    # so the directory they came from is echoed rather than left to be guessed.
+    print(f"[*] rules source: {base}")
+
+    try:
+        result = airules.apply_rules(base)
+    except FileNotFoundError as exc:
+        print(f"[-] {exc}", file=sys.stderr)
+        return airules.ExitStatus.NO_UNIVERSAL_RULES
+    except airules.NoAgentsError as exc:
+        warn_unknown_agents(exc.unknown)
+        valid = ", ".join(airules.known_agent_names())
+        print(f"[-] no known agents configured, nothing was written (valid: {valid})", file=sys.stderr)
+        return airules.ExitStatus.NO_KNOWN_AGENTS
+    except airules.BadAgentsError as exc:
+        valid = ", ".join(airules.known_agent_names())
+        print(f"[-] {exc} (valid: {valid})", file=sys.stderr)
+        return airules.ExitStatus.BAD_AGENTS_SETTING
+    except airules.BackupExistsError as exc:
+        report_blocking_backups(exc.backups)
+        return airules.ExitStatus.BACKUP_EXISTS
+
+    warn_unknown_agents(result.unknown)
+
+    # Named before the links, because this is the file that actually holds the
+    # rules — each agent path below is only a pointer at it.
+    print(f"[+] assembled {result.assembled}")
+    report_written(result.written)
+
+    return airules.ExitStatus.OK
+
+
+def main():
+    """
+    Run the ai-rules command line.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus: process exit status, whatever the dispatched command
+        returns.
+
+    Raises:
+        SystemExit: no command was given, the arguments are invalid, or
+            `--help` was requested. argparse exits 2 for a usage error, which is
+            why airules.ExitStatus has no member for it — argparse produces that
+            status itself and this function is never reached.
+        OSError: a target directory cannot be created, or a read or write
+            fails (e.g. permissions, read-only filesystem, no space).
+        ValueError: the config file is not valid JSON.
+        UnicodeDecodeError: a rules file is not valid UTF-8.
+    """
+
+    parser = build_parser()
+    args   = parser.parse_args()
+
+    return args.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

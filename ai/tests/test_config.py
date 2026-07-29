@@ -6,7 +6,9 @@ import airules
 
 
 class TestConfig(SandboxedTestCase):
-    """Covers config_path resolution and the config read/write round-trip."""
+    """
+    Covers config_path resolution and the config read/write round-trip.
+    """
 
     def test_config_path_follows_xdg(self):
         self.assertEqual(
