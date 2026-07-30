@@ -98,7 +98,7 @@ Nothing has to exist up front — `./install.sh ai` works on a bare machine and 
 |---|---|---|
 | Private local-rules git remote | A repo you can clone over SSH, and working SSH auth to that host | Leave blank. The universal rules still apply; drop `*.md` files into `ai/local_rules/` by hand instead |
 | Agent targets | Nothing | Defaults to the agents whose directories already exist (`~/.claude`, `~/.codex`), falling back to `claude` |
-| Daily-notes path | Nothing yet — the sync tooling is not built | Defaults to `~/daily-notes`. It is recorded in the config and otherwise unused for now |
+| Daily-notes sync | Nothing — the sync tooling is not built yet | Defaults to `no`, and the follow-up question about where notes live is then skipped entirely |
 
 The private rules remote is only cloned when the local-rules directory is empty, so an existing `ai/local_rules/*.md` always wins over the remote — a clone can never overwrite rules that exist nowhere else. Clear the directory if you want the remote to take over.
 
@@ -144,7 +144,15 @@ The two commands:
 - `ai-setup` — asks where things live (private rules remote, which agents, notes path), writes the answers to `~/.config/ai-notes/config.json`, then runs `ai-rules apply`. Re-running it edits settings: every prompt is pre-filled with what is already configured, so pressing enter keeps it. `--dry-run` reports what it would write and stops. Non-interactive when stdin is not a terminal, which is how `install.sh` drives it.
 - `ai-rules apply` — merges the two layers into **one** file at `~/.config/ai-notes/rules.md` and symlinks each agent's rules path to it, so nothing is duplicated and the agents cannot drift apart.
 
-Anything already at an agent's path that this tool did not put there is copied to `<path>.bak` first. That backup is written once and never overwritten — if one is already there the run stops and says so, because it holds the only copy of whatever was there before, while the assembled file can be rebuilt from the sources at any time. Remove it yourself once you are happy.
+#### Daily notes — asked about, not built yet
+
+`ai-setup` asks whether to enable daily-notes sync, and it defaults to **no**. Answer no and nothing else about notes is asked or recorded.
+
+The intent: a private git repo of dated work notes (`~/daily-notes/<date>/<project>.md`) kept in step across several machines, with the agent pulling before it writes so two machines cannot silently diverge, and stopping to ask on a real conflict rather than picking a winner. The rules layer already carries the nudge to keep those notes, wrapped in `notes-nudge` markers so it is stripped from the assembled rules on any machine where sync is off.
+
+None of that exists yet — there is no `daily-notes-sync` command. Until it lands, saying yes only records a path and turns the nudge on. Say no unless you are working on that feature.
+
+Anything already at an agent's path that this tool did not put there is moved into the backup directory first. That backup is written once and never overwritten — if one is already there the run stops and says so, because it holds the only copy of whatever was there before, while the assembled file can be rebuilt from the sources at any time. Remove it yourself once you are happy.
 
 ## Troubleshooting
 
