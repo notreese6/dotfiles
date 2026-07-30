@@ -104,12 +104,13 @@ class TestAiRulesCli(SandboxedTestCase):
             notes_enabled   = False,
         )
 
-    def run_cli(self, *args):
+    def run_cli(self, *args, **overrides):
         """
         Run the ai-rules script in a subprocess against the sandbox.
 
         Args:
             *args (str): command-line arguments passed after the script name.
+            **overrides (str): environment variables to set for this run.
 
         Returns:
             subprocess.CompletedProcess: the finished run, with `returncode`,
@@ -124,6 +125,7 @@ class TestAiRulesCli(SandboxedTestCase):
         # so the child process resolves the same config and targets we do.
         env           = dict(os.environ)
         env["AI_DIR"] = str(self.fake_ai)
+        env.update(overrides)
 
         return subprocess.run(
             [str(self.repo / "ai" / "bin" / "ai-rules")] + list(args),
@@ -183,13 +185,15 @@ class TestAiRulesCli(SandboxedTestCase):
 
         Returns:
             list: [pathlib.Path] every path under the sandbox whose name ends in
-            airules.BACKUP_SUFFIX, sorted. Empty when no backup was taken.
+            the backup root, sorted. Empty when no backup was taken.
 
         Raises:
             OSError: the sandbox exists but cannot be walked.
         """
 
-        return sorted(self.home.rglob("*" + airules.BACKUP_SUFFIX))
+        root = self.home / airules.BACKUP_DIRNAME
+
+        return sorted(p for p in root.rglob("*") if p.is_file()) if root.is_dir() else []
 
     def backup_notices(self, stdout):
         """
@@ -207,13 +211,10 @@ class TestAiRulesCli(SandboxedTestCase):
         """
 
         # The [*] tag is matched too, so a success or warning line that happens
-        # to mention a backup cannot be read as the notice itself. The path sits
-        # mid-sentence, so it is cut at the em dash the rest of the line opens
-        # with rather than run to the end.
-        prefix = "[*] the rules that were there are saved at "
+        # to mention a backup cannot be read as the notice itself.
+        prefix = "[*] what was there is saved at "
 
-        return [Path(line[len(prefix):].split(" — ", 1)[0])
-                for line in stdout.splitlines() if line.startswith(prefix)]
+        return [Path(line[len(prefix):]) for line in stdout.splitlines() if line.startswith(prefix)]
 
     def real_agent_entries(self):
         """
@@ -440,7 +441,7 @@ class TestAiRulesCli(SandboxedTestCase):
 
         # The live file the very first apply overwrites is the one with no copy
         # anywhere else, so it is the one the backup has to be holding
-        self.assertEqual(airules.backup_path(claude_md).read_text(encoding="utf-8"), PRIOR_RULES)
+        self.assertEqual(self.backup_of(claude_md).read_text(encoding="utf-8"), PRIOR_RULES)
         self.assertNotEqual(claude_md.read_text(encoding="utf-8"), PRIOR_RULES)
 
     def test_second_apply_proceeds_and_leaves_the_first_backup_alone(self):
@@ -459,87 +460,8 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
         self.assertIn("Revision TWO.", claude_md.read_text(encoding="utf-8"))
-        self.assertEqual(airules.backup_path(claude_md).read_text(encoding="utf-8"), PRIOR_RULES)
-        self.assertEqual(self.sandbox_backups(), [airules.backup_path(claude_md)])
-
-    def test_a_stale_backup_cannot_block_creating_a_target_that_is_absent(self):
-        claude_md = self.home / ".claude" / "CLAUDE.md"
-        claude_md.parent.mkdir(parents=True)
-        airules.backup_path(claude_md).write_text("STALE BACKUP\n", encoding="utf-8")
-
-        # Nothing is there to preserve, so no backup would be taken and none is
-        # at risk. Refusing here would wedge the tool over a file it never reads.
-        result = self.run_cli("apply")
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-        self.assertTrue(claude_md.is_symlink())
-        self.assertEqual(airules.backup_path(claude_md).read_text(encoding="utf-8"), "STALE BACKUP\n")
-
-    def test_refusal_leaves_every_target_untouched_not_just_the_blocked_one(self):
-        self.write_config(agents=["claude", "codex"])
-
-        targets = {
-            self.home / ".claude" / "CLAUDE.md": "CLAUDE SENTINEL\n",
-            self.home / ".codex"  / "AGENTS.md": "CODEX SENTINEL\n",
-        }
-
-        for path, body in targets.items():
-            path.parent.mkdir(parents=True)
-            path.write_text(body, encoding="utf-8")
-
-        # Only ONE target is blocked. Without a check that runs across all of them
-        # up front, whichever target is written first is already overwritten by
-        # the time the blocked one is reached.
-        blocked = airules.backup_path(self.home / ".codex" / "AGENTS.md")
-        blocked.write_text("EARLIER BACKUP\n", encoding="utf-8")
-
-        result = self.run_cli("apply")
-        self.assertEqual(result.returncode, airules.ExitStatus.BACKUP_EXISTS, result.stderr)
-
-        for path, body in targets.items():
-            self.assertEqual(path.read_text(encoding="utf-8"), body)
-
-        self.assertEqual(blocked.read_text(encoding="utf-8"), "EARLIER BACKUP\n")
-        self.assertEqual(self.sandbox_backups(), [blocked])
-
-    def test_refusal_names_every_blocking_backup(self):
-        self.write_config(agents=["claude", "codex"])
-
-        blocked = []
-        for relpath in ((".claude", "CLAUDE.md"), (".codex", "AGENTS.md")):
-            path = self.home.joinpath(*relpath)
-            path.parent.mkdir(parents=True)
-            path.write_text("SENTINEL\n", encoding="utf-8")
-            backup = airules.backup_path(path)
-            backup.write_text("EARLIER BACKUP\n", encoding="utf-8")
-            blocked.append(backup)
-
-        result = self.run_cli("apply")
-        self.assertEqual(result.returncode, airules.ExitStatus.BACKUP_EXISTS)
-
-        # Naming only the first would leave the user clearing one file at a time,
-        # rerunning to discover the next
-        for backup in blocked:
-            self.assertIn(str(backup), result.stderr)
-
-    def test_removing_the_backup_lets_the_next_apply_proceed(self):
-        claude_md = self.home / ".claude" / "CLAUDE.md"
-        claude_md.parent.mkdir(parents=True)
-        claude_md.write_text(PRIOR_RULES, encoding="utf-8")
-        backup = airules.backup_path(claude_md)
-        backup.write_text("EARLIER BACKUP\n", encoding="utf-8")
-
-        self.assertEqual(self.run_cli("apply").returncode, airules.ExitStatus.BACKUP_EXISTS)
-
-        backup.unlink()
-
-        # Clearing it by hand is the whole documented way forward, so the run
-        # after has to both link and take a fresh backup of what it replaced
-        result = self.run_cli("apply")
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-        self.assertEqual(backup.read_text(encoding="utf-8"), PRIOR_RULES)
-        self.assertTrue(claude_md.is_symlink())
+        self.assertEqual(self.backup_of(claude_md).read_text(encoding="utf-8"), PRIOR_RULES)
+        self.assertEqual(self.sandbox_backups(), [self.backup_of(claude_md)])
 
     def test_every_target_is_a_link_to_one_assembled_file(self):
         self.write_config(agents=["claude", "codex", "cursor"])
@@ -574,7 +496,7 @@ class TestAiRulesCli(SandboxedTestCase):
         # Repointed at ours, and what it used to reach is preserved, because a
         # link we did not make is as irreplaceable as a regular file
         self.assertEqual(claude_md.resolve(), airules.assembled_path().resolve())
-        self.assertEqual(airules.backup_path(claude_md).read_text(encoding="utf-8"), "# TRACKED ELSEWHERE\n")
+        self.assertEqual(self.backup_of(claude_md).read_text(encoding="utf-8"), "# TRACKED ELSEWHERE\n")
         self.assertEqual(elsewhere.read_text(encoding="utf-8"), "# TRACKED ELSEWHERE\n")
 
     def test_paste_notice_fires_once_and_only_for_cursor(self):
@@ -610,6 +532,62 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertIn("Em dash — and a bullet •",
                       airules.assembled_path().read_text(encoding="utf-8"))
 
+    def test_backups_land_in_the_shared_dotfiles_backup_directory(self):
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.parent.mkdir(parents=True)
+        claude_md.write_text(PRIOR_RULES, encoding="utf-8")
+
+        self.assertEqual(self.run_cli("apply").returncode, 0)
+
+        # One place to look, the same one install.sh uses. Nothing beside the
+        # rules file — a `.bak` sibling is exactly what people fail to find.
+        backups = self.sandbox_backups()
+        self.assertEqual(len(backups), 1, backups)
+        self.assertEqual(backups[0].read_text(encoding="utf-8"), PRIOR_RULES)
+        self.assertIn(airules.BACKUP_DIRNAME, str(backups[0]))
+        self.assertFalse((claude_md.parent / "CLAUDE.md.bak").exists())
+
+    def test_backup_mirrors_the_path_it_came_from(self):
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.parent.mkdir(parents=True)
+        claude_md.write_text(PRIOR_RULES, encoding="utf-8")
+
+        self.run_cli("apply")
+
+        # Mirrored rather than flattened to the basename, so it is obvious where
+        # the file came from and two same-named files cannot collide in here
+        self.assertTrue(str(self.sandbox_backups()[0]).endswith("/.claude/CLAUDE.md"))
+
+    def test_two_runs_that_both_back_up_do_not_collide(self):
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.parent.mkdir(parents=True)
+        claude_md.write_text(PRIOR_RULES, encoding="utf-8")
+
+        self.assertEqual(self.run_cli("apply").returncode, 0)
+
+        # Put a hand-written file back, so the next run has something to preserve
+        claude_md.unlink()
+        claude_md.write_text("# second hand-built file\n", encoding="utf-8")
+
+        # A fixed `.bak` name would have to choose between them, which is the
+        # whole reason the old code refused to run. Separate directories cannot.
+        self.assertEqual(self.run_cli("apply", **{"DOTFILES_BACKUP_DIR": str(self.home / airules.BACKUP_DIRNAME / "second")}).returncode, 0)
+
+        bodies = sorted(b.read_text(encoding="utf-8") for b in self.sandbox_backups())
+        self.assertEqual(bodies, sorted([PRIOR_RULES, "# second hand-built file\n"]))
+
+    def test_honours_an_exported_backup_directory(self):
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.parent.mkdir(parents=True)
+        claude_md.write_text(PRIOR_RULES, encoding="utf-8")
+
+        shared = self.home / airules.BACKUP_DIRNAME / "20260101-000000"
+        self.assertEqual(self.run_cli("apply", **{"DOTFILES_BACKUP_DIR": str(shared)}).returncode, 0)
+
+        # install.sh exports its own directory so one install run collects both
+        # its backups and ours under a single timestamp
+        self.assertEqual((shared / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"), PRIOR_RULES)
+
     def test_backup_notice_names_the_real_path_once_per_target(self):
         self.write_config(agents=["claude", "codex"])
 
@@ -623,7 +601,7 @@ class TestAiRulesCli(SandboxedTestCase):
 
         noticed = self.backup_notices(result.stdout)
 
-        self.assertEqual(noticed, [airules.backup_path(path) for path in self.wrote_paths(result.stdout)])
+        self.assertEqual(noticed, [self.backup_of(path) for path in self.wrote_paths(result.stdout)])
         for path in noticed:
             self.assertTrue(path.is_file(), "%s was named in a notice but does not exist" % path)
 
@@ -721,6 +699,24 @@ class TestBackupGuard(SandboxedTestCase):
     """
 
     @property
+    def into(self):
+        """
+        The backup directory this class's direct _back_up calls file into.
+
+        Args:
+            None
+
+        Returns:
+            pathlib.Path: a fixed directory under the sandboxed HOME, so a test
+            can predict where a backup landed without knowing a timestamp.
+
+        Raises:
+            None
+        """
+
+        return self.home / airules.BACKUP_DIRNAME / "test-run"
+
+    @property
     def assembled(self):
         """
         The assembled rules file this sandbox's agent paths point at.
@@ -747,13 +743,15 @@ class TestBackupGuard(SandboxedTestCase):
 
         Returns:
             list: [pathlib.Path] every path below `root` whose name ends in
-            airules.BACKUP_SUFFIX, sorted. Empty when none was taken.
+            the backup root, sorted. Empty when none was taken.
 
         Raises:
             OSError: `root` exists but cannot be walked.
         """
 
-        return sorted(root.rglob("*" + airules.BACKUP_SUFFIX))
+        backups = root / airules.BACKUP_DIRNAME
+
+        return sorted(p for p in backups.rglob("*") if p.is_file()) if backups.is_dir() else []
 
     def _target(self, body="LIVE RULES\n"):
         """
@@ -775,32 +773,11 @@ class TestBackupGuard(SandboxedTestCase):
 
         return path
 
-    def test_refuses_when_the_backup_is_already_there(self):
-        path   = self._target()
-        backup = airules.backup_path(path)
-        backup.write_text("EARLIER BACKUP\n", encoding="utf-8")
-
-        with self.assertRaises(airules.BackupExistsError) as caught:
-            airules._back_up(path, self.assembled)
-
-        self.assertEqual(caught.exception.backups, [backup])
-        self.assertEqual(backup.read_text(encoding="utf-8"), "EARLIER BACKUP\n")
-
-    def test_refuses_when_a_directory_holds_the_backup_name(self):
-        path = self._target()
-
-        # Not a file, so an is_file() check would wave it through and the write
-        # would then fail partway with a bare OSError instead of this refusal
-        airules.backup_path(path).mkdir()
-
-        with self.assertRaises(airules.BackupExistsError):
-            airules._back_up(path, self.assembled)
-
     def test_takes_the_backup_when_nothing_is_in_the_way(self):
         path   = self._target()
-        backup = airules._back_up(path, self.assembled)
+        backup = airules._back_up(path, self.assembled, self.into)
 
-        self.assertEqual(backup, airules.backup_path(path))
+        self.assertEqual(backup, airules.backup_path(path, self.into))
         self.assertEqual(backup.read_text(encoding="utf-8"), "LIVE RULES\n")
 
     def test_skips_our_own_link_so_a_rerun_is_not_blocked(self):
@@ -812,7 +789,7 @@ class TestBackupGuard(SandboxedTestCase):
 
         # A link of ours holds a pointer, not rules. Backing it up would save
         # nothing and would then block every apply after the first.
-        self.assertIsNone(airules._back_up(path, self.assembled))
+        self.assertIsNone(airules._back_up(path, self.assembled, self.into))
         self.assertEqual(self.sandbox_backups_under(self.home), [])
 
     def test_backs_up_a_foreign_link_before_repointing_it(self):
@@ -824,7 +801,7 @@ class TestBackupGuard(SandboxedTestCase):
         path.symlink_to(elsewhere)
 
         # Not ours, so its contents are as irreplaceable as a regular file's
-        backup = airules._back_up(path, self.assembled)
+        backup = airules._back_up(path, self.assembled, self.into)
         self.assertEqual(backup.read_text(encoding="utf-8"), "SOMEONE ELSE'S RULES\n")
 
 

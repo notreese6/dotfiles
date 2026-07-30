@@ -23,6 +23,8 @@ ENV_AGENTS             = "AI_SETUP_AGENTS"
 ENV_LOCAL_RULES_DIR    = "AI_SETUP_LOCAL_RULES_DIR"
 ENV_LOCAL_RULES_REMOTE = "AI_SETUP_LOCAL_RULES_REMOTE"
 ENV_NOTES_PATH         = "AI_SETUP_NOTES_PATH"
+ENV_NOTES_ENABLED      = "AI_SETUP_NOTES_ENABLED"
+ENV_BACKUP_DIR_ROOT    = "AI_SETUP_BACKUP_DIR"
 
 NOTES_DIRNAME = "daily-notes"
 
@@ -110,6 +112,54 @@ def ask(question, default, env_key):
     answer = input(f"{question} [{default}]: ").strip()
 
     return answer if answer else default
+
+
+def absolute_under(answer, home):
+    """
+    Turn a path answer into an absolute one.
+
+    Args:
+        answer (str): what the user typed, possibly `~`-prefixed or relative.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        pathlib.Path: `answer` with a leading `~` expanded, anchored under
+        `home` when it is still relative. A bare word would otherwise resolve
+        against the current directory, which for a backup location means
+        scattering files wherever the command happened to be run.
+
+    Raises:
+        None
+    """
+
+    path = Path(answer).expanduser()
+
+    return path if path.is_absolute() else home / path
+
+
+def ask_yes_no(question, default, env_key):
+    """
+    Ask a yes/no question, keeping the blank-is-the-default shape.
+
+    Phrased as a word with the current setting in brackets rather than as
+    `[y/N]`, so every prompt in this tool answers the same way: press enter to
+    keep what is shown, or type a new value.
+
+    Args:
+        question (str): the prompt text.
+        default (bool): the setting as it stands, shown in brackets.
+        env_key (str): environment variable that overrides both.
+
+    Returns:
+        bool: True for yes/y/true/1 in any case, False for anything else.
+
+    Raises:
+        OSError: stdin cannot be read, or the prompt cannot be written.
+    """
+
+    answer = ask(question, "yes" if default else "no", env_key)
+
+    return answer.strip().lower() in ("y", "yes", "true", "1")
 
 
 def detect_agents(home):
@@ -232,11 +282,26 @@ def gather(base, home):
         " ".join(config.agents) or detect_agents(home),
         ENV_AGENTS,
     ).split()
-    config.notes_path = Path(ask(
-        "Daily-notes path",
-        str(config.notes_path or home / NOTES_DIRNAME),
-        ENV_NOTES_PATH,
-    ))
+    config.notes_enabled = ask_yes_no(
+        "Enable daily-notes sync",
+        config.notes_enabled,
+        ENV_NOTES_ENABLED,
+    )
+
+    # Only asked when the answer will be used. Asking where notes live on a
+    # machine that will not sync them is a question with no consequence, and a
+    # setup that asks those trains you to stop reading the ones that matter.
+    if config.notes_enabled:
+        config.notes_path = absolute_under(ask(
+            "Daily-notes path",
+            str(config.notes_path or home / NOTES_DIRNAME),
+            ENV_NOTES_PATH,
+        ), home)
+    config.backup_dir = absolute_under(ask(
+        "Backup directory",
+        str(config.backup_dir or airules.default_backup_root()),
+        ENV_BACKUP_DIR_ROOT,
+    ), home)
 
     config.ai_dir          = base
     config.local_rules_dir = Path(
@@ -354,7 +419,8 @@ def run_setup(should_write):
     for line in config.describe():
         print(f"[*] {line}")
 
-    warn_if_tcc(config.notes_path, home)
+    if config.notes_enabled and config.notes_path:
+        warn_if_tcc(config.notes_path, home)
 
     if not should_write:
         print("[*] dry run, nothing was written")

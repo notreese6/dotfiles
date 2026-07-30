@@ -89,6 +89,34 @@ class SandboxedTestCase(unittest.TestCase):
         os.environ["HOME"]            = str(self.home)
         os.environ["XDG_CONFIG_HOME"] = str(self.xdg)
 
+    def backup_of(self, target):
+        """
+        Find where a displaced file was filed, without knowing the timestamp.
+
+        Backups land in `~/.dotfiles-backup/<timestamp>/<path under home>`, and
+        a test cannot predict the timestamp, so the tree is searched for the
+        mirrored path instead.
+
+        Args:
+            target (pathlib.Path): the file that was replaced.
+
+        Returns:
+            pathlib.Path: the single backup of `target`. Points at a
+            non-existent path when none was taken, so a caller asserting on its
+            contents fails with a missing file rather than silently passing.
+
+        Raises:
+            AssertionError: more than one backup of `target` exists, which would
+                make any assertion about "the" backup ambiguous.
+        """
+
+        root  = self.home / airules.BACKUP_DIRNAME
+        found = sorted(root.glob(f"*/{target.relative_to(self.home)}")) if root.is_dir() else []
+
+        assert len(found) < 2, f"expected at most one backup of {target}, found {found}"
+
+        return found[0] if found else root / "never-taken" / target.name
+
     def write_config(self, **settings):
         """
         Put settings straight into the sandboxed config file.

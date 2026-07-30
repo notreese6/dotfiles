@@ -108,11 +108,27 @@ class TestAiSetup(SandboxedTestCase):
         self.assertEqual(claude_md.resolve(), airules.assembled_path().resolve())
 
     def test_defaults_notes_path_outside_tcc(self):
-        self.run_setup()
+        self.run_setup(AI_SETUP_NOTES_ENABLED="yes")
         self.assertEqual(airules.config_get("notes_path"), str(self.home / "daily-notes"))
 
+    def test_notes_path_is_not_asked_when_notes_are_off(self):
+        self.run_setup(AI_SETUP_NOTES_PATH=str(self.home / "somewhere"))
+
+        # Notes default to off, and a setting nothing will read should not be
+        # recorded from a question that should never have been asked
+        self.assertIs(airules.config_get("notes_enabled"), False)
+        self.assertEqual(airules.config_get("notes_path", None), None)
+
+    def test_enabling_notes_asks_for_the_path(self):
+        self.run_setup(AI_SETUP_NOTES_ENABLED="yes",
+                       AI_SETUP_NOTES_PATH=str(self.home / "somewhere"))
+
+        self.assertIs(airules.config_get("notes_enabled"), True)
+        self.assertEqual(airules.config_get("notes_path"), str(self.home / "somewhere"))
+
     def test_warns_when_notes_path_is_tcc_protected(self):
-        result = self.run_setup(AI_SETUP_NOTES_PATH=str(self.home / "Documents" / "daily-notes"))
+        result = self.run_setup(AI_SETUP_NOTES_ENABLED="yes",
+                                AI_SETUP_NOTES_PATH=str(self.home / "Documents" / "daily-notes"))
 
         output = result.stdout + result.stderr
         self.assertIn("Documents", output)
@@ -120,14 +136,14 @@ class TestAiSetup(SandboxedTestCase):
 
     def test_warns_when_notes_path_is_in_icloud(self):
         icloud = self.home / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "notes"
-        result = self.run_setup(AI_SETUP_NOTES_PATH=str(icloud))
+        result = self.run_setup(AI_SETUP_NOTES_ENABLED="yes", AI_SETUP_NOTES_PATH=str(icloud))
 
         # iCloud is TCC-gated the same way but is not one of the three folder
         # names, so it needs its own check rather than falling out of the list
         self.assertRegex((result.stdout + result.stderr).lower(), r"warn|restrict")
 
     def test_accepts_a_notes_path_outside_the_home_directory(self):
-        result = self.run_setup(AI_SETUP_NOTES_PATH="/srv/notes")
+        result = self.run_setup(AI_SETUP_NOTES_ENABLED="yes", AI_SETUP_NOTES_PATH="/srv/notes")
         self.assertEqual(result.returncode, 0, result.stderr)
 
         # relative_to() raises for a path outside HOME. Left unhandled that ends
@@ -141,10 +157,12 @@ class TestAiSetup(SandboxedTestCase):
 
         self.assertEqual(airules.config_get("agents"), ["claude", "codex"])
 
-    def test_rerun_preserves_notes_enabled(self):
-        self.run_setup()
-        self.write_config(notes_enabled=True)
-        self.run_setup()
+    def test_rerun_keeps_notes_enabled_when_the_prompt_is_unanswered(self):
+        self.run_setup(AI_SETUP_NOTES_ENABLED="yes")
+
+        # No override: the prompt is pre-filled from the config, so a bare enter
+        # re-chooses yes rather than silently turning sync off
+        self.run_setup(AI_SETUP_NOTES_ENABLED=None)
 
         self.assertIs(airules.config_get("notes_enabled"), True)
 
@@ -170,6 +188,39 @@ class TestAiSetup(SandboxedTestCase):
         data = json.loads(airules.config_path().read_text(encoding="utf-8"))
         self.assertEqual(data["agents"], ["claude"])
 
+    def test_backup_dir_defaults_to_the_shared_root(self):
+        self.run_setup()
+
+        # Same default install.sh uses, so the two agree with no configuration
+        self.assertEqual(airules.config_get("backup_dir"), str(self.home / airules.BACKUP_DIRNAME))
+
+    def test_backup_dir_is_configurable(self):
+        self.run_setup(AI_SETUP_BACKUP_DIR=str(self.home / "elsewhere"))
+
+        self.assertEqual(airules.config_get("backup_dir"), str(self.home / "elsewhere"))
+
+    def test_a_configured_backup_dir_is_where_backups_land(self):
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.parent.mkdir(parents=True)
+        claude_md.write_text("# hand built\n", encoding="utf-8")
+
+        elsewhere = self.home / "elsewhere"
+        self.run_setup(AI_SETUP_BACKUP_DIR=str(elsewhere))
+
+        # Configuring it has to actually move the backups, not just record a path
+        kept = [p for p in elsewhere.rglob("*") if p.is_file()]
+        self.assertEqual(len(kept), 1, kept)
+        self.assertEqual(kept[0].read_text(encoding="utf-8"), "# hand built\n")
+
+    def test_pressing_enter_keeps_the_configured_backup_dir(self):
+        self.run_setup(AI_SETUP_BACKUP_DIR=str(self.home / "elsewhere"))
+
+        # No override this time: every prompt is pre-filled from the config, so a
+        # bare enter re-chooses what is already set rather than resetting it
+        self.run_setup(AI_SETUP_BACKUP_DIR=None)
+
+        self.assertEqual(airules.config_get("backup_dir"), str(self.home / "elsewhere"))
+
     def test_dry_run_writes_nothing(self):
         result = self.run_setup("--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -186,19 +237,6 @@ class TestAiSetup(SandboxedTestCase):
         self.run_setup("--dry-run", AI_SETUP_AGENTS="claude codex cursor")
 
         self.assertEqual(airules.config_path().read_text(encoding="utf-8"), before)
-
-    def test_reports_the_failure_when_apply_refuses(self):
-        claude_md = self.home / ".claude" / "CLAUDE.md"
-        claude_md.parent.mkdir(parents=True)
-        claude_md.write_text("HAND BUILT\n", encoding="utf-8")
-        airules.backup_path(claude_md).write_text("EARLIER BACKUP\n", encoding="utf-8")
-
-        result = self.run_setup()
-
-        # apply refuses rather than destroy the backup, and setup has to pass
-        # that up instead of reporting a setup that did not finish as success
-        self.assertEqual(result.returncode, airules.ExitStatus.BACKUP_EXISTS)
-        self.assertEqual(claude_md.read_text(encoding="utf-8"), "HAND BUILT\n")
 
     def test_unknown_argument_is_rejected(self):
         result = self.run_setup("--nope")

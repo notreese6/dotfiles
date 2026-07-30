@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 CONFIG_RELPATH = "ai-notes/config.json"
-BACKUP_SUFFIX  = ".bak"
+
+# Displaced files go to one timestamped directory per run, the same place and
+# scheme install.sh uses, so there is a single obvious place to look. Timestamped
+# rather than a fixed `<file>.bak` beside the original: a fixed name collides
+# with itself on the next run, which is the only reason the old code had to
+# refuse rather than overwrite. install.sh exports its own directory through
+# ENV_BACKUP_DIR so one install run collects everything under one timestamp.
+BACKUP_DIRNAME = ".dotfiles-backup"
 
 # Every agent is handed the same assembled document, so it is written once to
 # this file beside the config and each agent's path is symlinked to it. Copying
@@ -39,6 +46,7 @@ LOCAL_RULES_SKIP = ("readme.md",)
 # not fail — config_get quietly hands back the default instead.
 CONFIG_KEY_AGENTS             = "agents"
 CONFIG_KEY_AI_DIR             = "ai_dir"
+CONFIG_KEY_BACKUP_DIR         = "backup_dir"
 CONFIG_KEY_LOCAL_RULES_DIR    = "local_rules_dir"
 CONFIG_KEY_LOCAL_RULES_REMOTE = "local_rules_remote"
 CONFIG_KEY_NOTES_ENABLED      = "notes_enabled"
@@ -48,6 +56,7 @@ CONFIG_KEY_UPDATED_AT         = "updated_at"
 # The environment variables this module honors, for the same reason: a mistyped
 # name reads as unset rather than as an error.
 ENV_AI_DIR          = "AI_DIR"
+ENV_BACKUP_DIR      = "DOTFILES_BACKUP_DIR"
 ENV_XDG_CONFIG_HOME = "XDG_CONFIG_HOME"
 
 
@@ -72,9 +81,9 @@ class ExitStatus(IntEnum):
         NO_KNOWN_AGENTS: not one configured agent name is recognized, so there
             was nowhere to write.
         BAD_AGENTS_SETTING: the `agents` setting is neither a name nor a list of
-            names, so it could not be read at all.
-        BACKUP_EXISTS: a target's backup file is already there, so this run
-            would have had to destroy it to take a new one. Nothing was written.
+            names, so it could not be read at all. 5 is absent for the same kind of
+            reason as 2: it reported a backup collision that timestamped backup
+            directories made impossible.
         CLONE_FAILED: the configured local-rules remote could not be cloned, so
             setup stopped before writing any settings.
     """
@@ -83,7 +92,6 @@ class ExitStatus(IntEnum):
     NO_UNIVERSAL_RULES = 1
     NO_KNOWN_AGENTS    = 3
     BAD_AGENTS_SETTING = 4
-    BACKUP_EXISTS      = 5
     CLONE_FAILED       = 6
 
 
@@ -277,43 +285,6 @@ class EmptyRulesError(FileNotFoundError):
         self.path = Path(path)
 
         super().__init__(f"universal rules file is empty, nothing was written: {self.path}")
-
-
-class BackupExistsError(FileExistsError):
-    """
-    A backup file is already in place, so this run cannot take a fresh one.
-
-    The existing backup is the only copy of whatever the target held before this
-    tool first wrote to it, and it cannot be reconstructed from anything in the
-    repository. The target, by contrast, is regenerated from the universal and
-    local layers on every apply. Overwriting the backup would therefore trade
-    the one irreplaceable file for a copy of a reproducible one, so the run
-    stops instead and leaves the decision to whoever can tell which copy they
-    still want.
-
-    Attributes:
-        backups (list): [pathlib.Path] every backup already present, in target
-            order. Never empty.
-    """
-
-    def __init__(self, backups):
-        """
-        Name the backups that are in the way.
-
-        Args:
-            backups (iterable of pathlib.Path): the backup files that already
-                exist. Must hold at least one path.
-
-        Returns:
-            None
-
-        Raises:
-            None
-        """
-
-        self.backups = list(backups)
-
-        super().__init__(f"backup already exists: {', '.join(str(path) for path in self.backups)}")
 
 
 @dataclass(frozen=True)
@@ -630,6 +601,9 @@ class Config:
             from the string-or-list the file may hold.
         ai_dir (pathlib.Path or None): the `ai/` directory rules are read from.
             None when never recorded.
+        backup_dir (pathlib.Path or None): the root that displaced files are
+            filed under, one timestamped directory per run. None means the
+            BACKUP_DIRNAME default in the home directory.
         local_rules_dir (pathlib.Path or None): directory holding the private
             `*.md` rules. None when unset; callers supply their own default,
             since it depends on where `ai/` is.
@@ -652,6 +626,7 @@ class Config:
 
     agents:             List[str]
     ai_dir:             Optional[Path] = None
+    backup_dir:         Optional[Path] = None
     local_rules_dir:    Optional[Path] = None
     local_rules_remote: str            = ""
     notes_enabled:      bool           = False
@@ -664,6 +639,7 @@ class Config:
     OWNED_KEYS = (
         CONFIG_KEY_AGENTS,
         CONFIG_KEY_AI_DIR,
+        CONFIG_KEY_BACKUP_DIR,
         CONFIG_KEY_LOCAL_RULES_DIR,
         CONFIG_KEY_LOCAL_RULES_REMOTE,
         CONFIG_KEY_NOTES_ENABLED,
@@ -696,6 +672,7 @@ class Config:
         return cls(
             agents             = _agent_names(data.get(CONFIG_KEY_AGENTS, ["claude"])),
             ai_dir             = _as_path(data.get(CONFIG_KEY_AI_DIR)),
+            backup_dir         = _as_path(data.get(CONFIG_KEY_BACKUP_DIR)),
             local_rules_dir    = _as_path(data.get(CONFIG_KEY_LOCAL_RULES_DIR)),
             local_rules_remote = data.get(CONFIG_KEY_LOCAL_RULES_REMOTE, ""),
             notes_enabled      = bool(data.get(CONFIG_KEY_NOTES_ENABLED, False)),
@@ -735,6 +712,7 @@ class Config:
         # Paths go out as strings, and an unset one is left out entirely rather
         # than written as null, so absent and "explicitly nothing" stay distinct.
         for key, value in ((CONFIG_KEY_AI_DIR,          self.ai_dir),
+                           (CONFIG_KEY_BACKUP_DIR,      self.backup_dir),
                            (CONFIG_KEY_LOCAL_RULES_DIR, self.local_rules_dir),
                            (CONFIG_KEY_NOTES_PATH,      self.notes_path)):
             if value is not None:
@@ -764,6 +742,7 @@ class Config:
             ("rules source",       self.ai_dir),
             ("agents",             " ".join(self.agents)),
             ("local rules dir",    self.local_rules_dir),
+            ("backup dir",         self.backup_dir or default_backup_root()),
             ("local rules remote", self.local_rules_remote),
             ("notes path",         self.notes_path),
             ("notes enabled",      self.notes_enabled),
@@ -1134,34 +1113,127 @@ def agent_targets(names):
     return ResolvedTargets(targets=targets, unknown=unknown)
 
 
-def backup_path(target):
+def default_backup_root():
     """
-    Name the backup that sits beside an agent's rules file.
-
-    One fixed name per target, rather than a dated copy per run, so a stale
-    backup is something the user sees and clears rather than one of a growing
-    pile they stop reading. It is a sibling of the target, which keeps it on the
-    same filesystem and inside the directory the agent already owns.
+    Name the backup root used when nothing has configured one.
 
     Args:
-        target (str or pathlib.Path): the rules file that is about to be
-            overwritten. Need not exist.
+        None
 
     Returns:
-        pathlib.Path: `target` with BACKUP_SUFFIX appended to its filename, e.g.
-        `~/.claude/CLAUDE.md` -> `~/.claude/CLAUDE.md.bak`. Not guaranteed to
-        exist.
+        pathlib.Path: `~/.dotfiles-backup`, the same root install.sh defaults to,
+        so both tools land in one place without either having to be configured.
+
+    Raises:
+        None
+    """
+
+    return Path(os.path.expanduser("~")) / BACKUP_DIRNAME
+
+
+def backup_root():
+    """
+    Resolve the configured backup root.
+
+    Args:
+        None
+
+    Returns:
+        pathlib.Path: the `backup_dir` setting when one is recorded, otherwise
+        default_backup_root(). This is the root, not the per-run directory —
+        backup_dir() adds the timestamp.
+
+    Raises:
+        BadAgentsError: the `agents` setting is malformed, since reading the
+            config parses the whole record.
+        OSError: the config file exists but cannot be read.
+        ValueError: the config file is not valid JSON.
+    """
+
+    return Config.load().backup_dir or default_backup_root()
+
+
+def backup_dir(now):
+    """
+    Name the directory this run moves displaced files into.
+
+    Args:
+        now (str): timestamp for the directory name, `YYYYmmdd-HHMMSS`. Passed
+            in rather than read here so every file in one run lands together,
+            even if the run straddles a second boundary.
+
+    Returns:
+        pathlib.Path: `$DOTFILES_BACKUP_DIR` verbatim when install.sh exported
+        one, so an install collects its own backups and ours in a single
+        directory; otherwise the configured root with `now` below it. Not
+        created here.
+
+    Raises:
+        None
+    """
+
+    # install.sh exports the whole per-run directory, timestamp included, so one
+    # install collects its own backups and ours together. A standalone run has no
+    # such directory and builds its own under the configured root.
+    override = os.environ.get(ENV_BACKUP_DIR)
+    if override:
+        return Path(override)
+
+    return backup_root() / now
+
+
+def backup_stamp():
+    """
+    Produce the timestamp used to name a backup directory.
+
+    Args:
+        None
+
+    Returns:
+        str: local time as `YYYYmmdd-HHMMSS`. Local rather than UTC, and in the
+        same format install.sh uses, so the directories from both tools sort
+        together and read as the wall-clock time the user ran them.
+
+    Raises:
+        None
+    """
+
+    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def backup_path(target, into):
+    """
+    Name where one displaced file is filed inside a backup directory.
+
+    Args:
+        target (str or pathlib.Path): the file about to be replaced.
+        into (pathlib.Path): the backup directory from backup_dir().
+
+    Returns:
+        pathlib.Path: `target`'s path rebuilt under `into` — relative to the
+        home directory when it lives there, otherwise with the leading
+        separator dropped. Mirroring the path rather than flattening to the
+        basename keeps two files with the same name from overwriting each other
+        and says where each came from.
 
     Raises:
         None
     """
 
     path = Path(target)
+    home = Path(os.path.expanduser("~"))
 
-    return path.with_name(path.name + BACKUP_SUFFIX)
+    try:
+        relative = path.relative_to(home)
+    except ValueError:
+        # Outside home, so anchor on the absolute path with the root stripped
+        # rather than raising — relative_to has no None to return.
+        relative = Path(*path.parts[1:]) if path.is_absolute() else path
+
+    return into / relative
 
 
-def _back_up(target, assembled):
+def _back_up(target, assembled, into):
     """
     Preserve a rules file's current contents before it is replaced.
 
@@ -1170,25 +1242,22 @@ def _back_up(target, assembled):
 
     A path that is already this tool's own symlink is skipped: it holds nothing
     but a pointer at `assembled`, which the run is rewriting anyway, so there is
-    nothing there to lose. That is what lets a second apply proceed — only a
-    file the tool did not put there is treated as irreplaceable.
+    nothing there to lose.
 
     Args:
         target (str or pathlib.Path): the rules file about to be replaced.
         assembled (pathlib.Path): the assembled rules file agent paths point at.
+        into (pathlib.Path): the backup directory from backup_dir().
 
     Returns:
-        pathlib.Path or None: the backup that was written, or None when `target`
-        does not exist yet and there was therefore nothing to preserve.
+        pathlib.Path or None: the backup that was written, or None when there
+        was nothing worth preserving — the target is absent, or is already our
+        own link.
 
     Raises:
-        BackupExistsError: the backup file is already there. Callers are
-            expected to have ruled this out for every target up front, so
-            reaching it here means a backup appeared mid-run; refused rather
-            than replaced either way.
         OSError: `target` cannot be read, or the backup cannot be written (e.g.
             permissions, read-only filesystem, no space). Let this propagate:
-            overwriting a file whose contents could not be preserved is the data
+            replacing a file whose contents could not be preserved is the data
             loss the backup exists to prevent.
         UnicodeDecodeError: `target` is not valid UTF-8, so its contents cannot
             be copied out. Refused for the same reason.
@@ -1196,65 +1265,19 @@ def _back_up(target, assembled):
 
     path = Path(target)
 
-    # Our own link from an earlier run. Backing it up would save a pointer, and
-    # would then block every apply after the first for no gain.
+    # Our own link from an earlier run. Backing it up would save a pointer.
     if links_to(path, assembled):
         return None
 
-    # A first-ever run has nothing to preserve, and an empty .bak would read as a
-    # backup of an empty rules file rather than as the absence of one. is_file()
-    # follows a symlink, so a foreign link's contents are preserved before this
-    # run repoints it.
+    # A first-ever run has nothing to preserve. is_file() follows a symlink, so
+    # a foreign link's contents are preserved before this run repoints it.
     if not path.is_file():
         return None
 
-    backup = backup_path(path)
-
-    # exists() rather than is_file(): a directory sitting on the backup name is
-    # equally in the way, and equally not ours to clear.
-    if backup.exists():
-        raise BackupExistsError([backup])
-
+    backup = backup_path(path, into)
     _atomic_write(backup, path.read_text(encoding="utf-8"))
 
     return backup
-
-
-def blocking_backups(targets, assembled):
-    """
-    Find the backups a run would have to destroy in order to take a new one.
-
-    The question is not which backups exist but which ones stand in the way. A
-    backup beside a target that will not be backed up anyway — one already
-    linked to `assembled`, or one with nothing there at all — is never touched,
-    so it blocks nothing and a stale copy cannot wedge the tool.
-
-    Args:
-        targets (iterable of AgentTarget): the targets a run is about to link.
-        assembled (pathlib.Path): the assembled rules file agent paths point at.
-
-    Returns:
-        list: [pathlib.Path] the backup path of every target that both needs
-        backing up and already has a backup, in the order the targets were
-        given. Empty when the run can proceed.
-
-    Raises:
-        OSError: a path cannot be inspected (e.g. permissions).
-    """
-
-    blocked = []
-
-    for target in targets:
-        # Mirrors _back_up's own two skips, so the pre-flight and the write
-        # agree on which targets are about to be preserved.
-        if links_to(target.path, assembled) or not target.path.is_file():
-            continue
-
-        backup = backup_path(target.path)
-        if backup.exists():
-            blocked.append(backup)
-
-    return blocked
 
 
 def _link_to_assembled(target, assembled):
@@ -1298,12 +1321,11 @@ def apply_rules(base_dir):
     """
     Assemble the rules and write them to every configured agent's file.
 
-    Every target that already exists is copied to its backup_path() first, so
-    the contents this run replaces survive one bad apply and can be restored by
-    hand. A backup is written once and never replaced: if one is already there,
-    the run refuses outright rather than overwrite it, because that file is the
-    only copy of whatever the target held before this tool first ran, while the
-    target itself is regenerated from the sources every time.
+    Anything at a target path that this tool did not put there is copied into a
+    timestamped directory under ~/.dotfiles-backup first, so the contents this
+    run replaces survive a bad apply and can be restored by hand. A path that is
+    already our own symlink holds a pointer rather than rules, so it is skipped
+    and a re-run costs nothing.
 
     Args:
         base_dir (str or pathlib.Path): the `ai/` directory holding `AGENTS.md`
@@ -1317,9 +1339,6 @@ def apply_rules(base_dir):
         written — the caller is expected to report them.
 
     Raises:
-        BackupExistsError: at least one target's backup file is already there.
-            Every target is checked before any of them is written, so a backup
-            in the way of the last one still leaves the first untouched.
         BadAgentsError: the `agents` setting is neither a name nor a list of
             names. Nothing is written or backed up before this is raised.
         EmptyRulesError: `base_dir/AGENTS.md` exists but is empty or holds only
@@ -1371,13 +1390,9 @@ def apply_rules(base_dir):
 
     assembled = assembled_path()
 
-    # Checked across every target before the first one is touched, so a backup
-    # blocking the last agent does not leave the earlier agents already
-    # relinked. _back_up refuses individually as well; this is what makes the
-    # refusal all-or-nothing instead of partway through.
-    blocked = blocking_backups(resolved.targets, assembled)
-    if blocked:
-        raise BackupExistsError(blocked)
+    # One directory for the whole run, so every file this apply displaces lands
+    # together rather than scattered across per-file timestamps.
+    into = backup_dir(backup_stamp())
 
     # The default depends on where ai/ is, which Config has no way to know, so
     # the fallback is supplied here rather than baked into the record.
@@ -1393,7 +1408,7 @@ def apply_rules(base_dir):
     for target in resolved.targets:
         # Taken before the relink, and deliberately allowed to raise: a file
         # whose contents could not be preserved is not replaced by a link.
-        backup = _back_up(target.path, assembled)
+        backup = _back_up(target.path, assembled, into)
 
         _link_to_assembled(target.path, assembled)
         written.append(WrittenRules(agent=target.agent, target=target.path, backup=backup))

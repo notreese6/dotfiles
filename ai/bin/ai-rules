@@ -60,32 +60,6 @@ def warn_unknown_agents(unknown):
         print(f"[-] unknown agent {name!r} in the 'agents' setting, skipped (valid: {valid})", file=sys.stderr)
 
 
-def report_blocking_backups(backups):
-    """
-    Report the backup files that stopped the run, and how to clear them.
-
-    Args:
-        backups (list of pathlib.Path): the backups already in place. Must hold
-            at least one path, since an empty list would print a refusal with
-            nothing named in it.
-
-    Returns:
-        None
-
-    Raises:
-        OSError: stderr cannot be written.
-    """
-
-    for backup in backups:
-        print(f"[-] backup already exists, refusing to overwrite it: {backup}", file=sys.stderr)
-
-    # The backup holds the rules from before this tool first ran and cannot be
-    # rebuilt, so say what is in it rather than making its removal sound routine.
-    print("[-] nothing was written; these hold the rules each file had before "
-          "ai-rules first wrote to it, so read them before removing them to continue",
-          file=sys.stderr)
-
-
 def report_written(written):
     """
     Report each rules file written, its backup, and any manual step left.
@@ -106,13 +80,11 @@ def report_written(written):
         print(f"[+] linked {record.target}")
 
         # None whenever there was nothing worth preserving — the path was absent,
-        # or was already our link. Not called disposable: this holds the rules
-        # that were there before and is the only copy of them. Says apply will
-        # never overwrite it, not that the next run stops — once the target is
-        # our link there is nothing left to back up, so it does not.
+        # or was already our link. Named in full because this is the only copy
+        # of whatever was there before, and a backup nobody can find is one
+        # nobody trusts.
         if record.backup is not None:
-            print(f"[*] the rules that were there are saved at {record.backup} — the only copy, "
-                  "and apply will never overwrite it")
+            print(f"[*] what was there is saved at {record.backup}")
 
         # True for an agent that reads its rules out of its own settings UI, not
         # off disk, so writing the file is only half the job — say where to paste
@@ -136,8 +108,7 @@ def run_apply():
         universal rules file is missing or empty; NO_KNOWN_AGENTS when no
         configured agent is recognized, so nothing was written;
         BAD_AGENTS_SETTING when the `agents` setting is not a name or a list of
-        names; BACKUP_EXISTS when a target's backup is already in place, so a
-        new one could not be taken without destroying it.
+        names.
 
     Raises:
         OSError: a target directory cannot be created, or a read or write
@@ -166,9 +137,6 @@ def run_apply():
         valid = ", ".join(airules.known_agent_names())
         print(f"[-] {exc} (valid: {valid})", file=sys.stderr)
         return airules.ExitStatus.BAD_AGENTS_SETTING
-    except airules.BackupExistsError as exc:
-        report_blocking_backups(exc.backups)
-        return airules.ExitStatus.BACKUP_EXISTS
 
     warn_unknown_agents(result.unknown)
 
