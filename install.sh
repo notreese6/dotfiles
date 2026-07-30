@@ -6,12 +6,17 @@
 #
 # Usage:
 #   ./install.sh              # install everything
-#   ./install.sh tmux         # install only the tmux configs
+#   ./install.sh vim ai       # install only these targets
 #   ./install.sh --dry-run    # show what would happen, change nothing
+#   ./install.sh --yes        # don't ask before replacing existing files
 #
 # Targets: tmux vim bash ai
 #   ai also runs ai-setup, which prompts for the private local-rules
 #   remote, the agents to write rules for, and the daily-notes path.
+#
+# Anything of yours that would be replaced is moved to
+# ~/.dotfiles-backup/<timestamp>/ first, and an interactive run asks
+# before touching each one. Answer n to keep what you have and skip it.
 # ============================================================
 
 # ---- Pre-flight ---------------------------------------------
@@ -40,7 +45,7 @@ if [ ! -w "$HOME" ]; then
   exit 1
 fi
 
-for _cmd in git ln mkdir mv readlink date; do
+for _cmd in git ln mkdir mv readlink date find wc; do
   command -v "$_cmd" >/dev/null 2>&1 || {
     echo "install.sh: required command not found: $_cmd" >&2
     exit 1
@@ -49,7 +54,6 @@ done
 unset _cmd
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKUP_DIR="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
 
 for _dir in tmux vim bash ai; do
   [ -d "$DOTFILES_DIR/$_dir" ] || {
@@ -61,12 +65,19 @@ done
 unset _dir
 
 DRY_RUN=false
+ASSUME_YES=false
 TARGETS=()
+
+# Counts files moved aside, so the closing summary can name the backup directory
+# only when something is actually in it. The old line printed the path every
+# time, including on runs that never created it.
+BACKED_UP=0
 
 # ---- Parse args ---------------------------------------------
 for arg in "$@"; do
   case "$arg" in
     --dry-run|-n) DRY_RUN=true ;;
+    --yes|-y)     ASSUME_YES=true ;;
     # Printed to the closing banner rather than to a fixed line number, which
     # silently truncated the help the moment the header above grew a line.
     -h|--help)    sed -n '2,/^# =\{10,\}$/p' "$0"; exit 0 ;;
@@ -93,6 +104,72 @@ warn() { echo "  ${c_yellow}!${c_reset} $*"; }
 err()  { echo "  ${c_red}✗${c_reset} $*" >&2; }
 
 
+# ---- Backup location ----------------------------------------
+# Settled before any target runs, because every target can displace files and one
+# answer has to hold for all of them. On a machine that has never run ai-setup
+# there is no config to read, so this is where the value first gets chosen —
+# resolving it lazily meant the answer only took effect on the NEXT install.
+configured_backup_root() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import airules
+print(airules.Config.load().backup_dir or "")' "$DOTFILES_DIR/ai/lib" 2>/dev/null || echo ""
+}
+
+# An explicit AI_SETUP_BACKUP_DIR wins: a caller that named a location meant it.
+BACKUP_ROOT="${AI_SETUP_BACKUP_DIR:-}"
+
+if [ -z "$BACKUP_ROOT" ]; then
+  BACKUP_ROOT="$(configured_backup_root)"
+fi
+
+if [ -z "$BACKUP_ROOT" ]; then
+  BACKUP_ROOT="$HOME/.dotfiles-backup"
+
+  # Only worth asking when there is someone to answer and nothing is configured.
+  if ! $DRY_RUN && ! $ASSUME_YES && [ -t 0 ]; then
+    printf "  %s?%s backup directory for anything replaced [%s] " \
+      "$c_yellow" "$c_reset" "$BACKUP_ROOT" >&2
+    if read -r reply && [ -n "$reply" ]; then
+      # Expand a leading ~, then anchor anything still relative to $HOME. A bare
+      # word would otherwise be relative to wherever install.sh was run from,
+      # scattering backups into the repo or the current directory.
+      reply="${reply/#\~/$HOME}"
+      case "$reply" in
+        /*) BACKUP_ROOT="$reply" ;;
+        *)  BACKUP_ROOT="$HOME/$reply" ;;
+      esac
+    fi
+  fi
+fi
+
+BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)"
+
+# ai-setup records the root so the choice survives to the next run; ai-rules
+# files into this run's directory rather than starting one of its own.
+export AI_SETUP_BACKUP_DIR="$BACKUP_ROOT"
+export DOTFILES_BACKUP_DIR="$BACKUP_DIR"
+
+
+# ---- confirm_replace: ask before clobbering an existing file -
+# Returns 0 to go ahead, 1 to keep what is there. Auto-yes when --yes was
+# given or stdin is not a terminal, so provisioning and CI behave as before;
+# an interactive run is the only one that stops to ask.
+confirm_replace() {
+  local dst="$1" reply
+
+  $ASSUME_YES && return 0
+  [ -t 0 ] || return 0
+
+  printf "  %s?%s replace %s — a copy goes to %s/ [y/N] " \
+    "$c_yellow" "$c_reset" "$dst" "$BACKUP_DIR" >&2
+  read -r reply || return 1
+
+  case "$reply" in
+    [yY]|[yY][eE][sS]) return 0 ;;
+    *)                 return 1 ;;
+  esac
+}
+
+
 # ---- link: symlink $1 -> $2 (with backup if needed) ---------
 link() {
   local src="$1" dst="${2/#\~/$HOME}"
@@ -107,13 +184,23 @@ link() {
 
   $DRY_RUN || mkdir -p "$(dirname "$dst")"
 
-  # Back up anything in the way.
+  # Back up anything in the way — and ask first, since anything reached here is
+  # a file the user wrote themselves, not one of ours from an earlier run.
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     if $DRY_RUN; then
-      warn "would back up $dst -> $BACKUP_DIR/"
+      warn "would move your $dst -> $BACKUP_DIR/${dst#"$HOME"/}"
+      BACKED_UP=$((BACKED_UP + 1))
+    elif ! confirm_replace "$dst"; then
+      warn "kept your existing $dst — skipped"
+      return 0
     else
-      mkdir -p "$BACKUP_DIR" && mv "$dst" "$BACKUP_DIR/"
-      warn "backed up existing $dst -> $BACKUP_DIR/"
+      # Mirror the path under $HOME rather than flattening to the basename, so
+      # two files that share a name cannot overwrite each other in here and it
+      # stays obvious where each one came from.
+      local kept="$BACKUP_DIR/${dst#"$HOME"/}"
+      mkdir -p "$(dirname "$kept")" && mv "$dst" "$kept"
+      BACKED_UP=$((BACKED_UP + 1))
+      warn "moved your $dst -> $kept"
     fi
   fi
 
@@ -186,6 +273,15 @@ install_ai() {
 }
 
 
+# ---- Announce the plan --------------------------------------
+# Names the targets rather than their files: --dry-run already lists every path
+# exactly, and repeating the list here is a second copy that would drift.
+info "Installing: ${TARGETS[*]}"
+echo "  Pick a subset by naming it (e.g. ./install.sh vim ai), or see every file first with --dry-run."
+$ASSUME_YES && warn "--yes: replacing existing files without asking (originals still go to $BACKUP_DIR/)"
+echo
+
+
 # ---- Dispatcher ---------------------------------------------
 for target in "${TARGETS[@]}"; do
   case "$target" in
@@ -200,8 +296,23 @@ done
 echo
 if $DRY_RUN; then
   info "Dry run complete — nothing was changed."
+  if [ "$BACKED_UP" -gt 0 ]; then
+    info "$BACKED_UP existing file(s) of yours would be moved to $BACKUP_DIR/"
+  fi
 else
-  info "Done. Backups (if any): $BACKUP_DIR"
+  # Counted from the directory rather than from BACKED_UP: ai-rules runs as a
+  # child process and files its own backups in here too, so a counter kept in
+  # this shell under-reports every run that installs the ai target.
+  kept=0
+  if [ -d "$BACKUP_DIR" ]; then
+    kept=$(find "$BACKUP_DIR" -type f | wc -l | tr -d ' ')
+  fi
+
+  if [ "$kept" -gt 0 ]; then
+    info "Done. $kept file(s) of yours were moved to $BACKUP_DIR/"
+  else
+    info "Done. Nothing of yours was replaced, so no backup was needed."
+  fi
   echo
   echo "Next steps:"
   echo "  - Open tmux and press 'prefix + I' to install plugins"
