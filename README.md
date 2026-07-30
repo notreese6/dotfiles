@@ -96,11 +96,11 @@ Nothing has to exist up front — `./install.sh ai` works on a bare machine and 
 
 | Prompt | Needed beforehand | If you skip it |
 |---|---|---|
-| Private local-rules git remote | A repo you can clone over SSH, and working SSH auth to that host | Leave blank. The universal rules still apply; drop `*.md` files into `ai/local_rules/` by hand instead |
+| Private local-rules git remote | A repo you can clone over SSH with **at least one `*.md` that is not `README.md`**, and working SSH auth to that host | Leave blank. The shareable modules still apply; drop `*.md` files into `~/.config/ai-notes/local_rules/` by hand instead |
 | Agent targets | Nothing | Defaults to the agents whose directories already exist (`~/.claude`, `~/.codex`), falling back to `claude` |
-| Daily-notes sync | Nothing — the sync tooling is not built yet | Defaults to `no`, and the follow-up question about where notes live is then skipped entirely |
+| One question per rules module | Nothing | Each module supplies its own default — `daily-notes` yes, `misc` no. Saying yes to `daily-notes` is followed immediately by where notes live; saying yes to `misc` **replaces** what your agent files hold now, so that prompt names each file first. Whatever is there is backed up either way |
 
-The private rules remote is only cloned when the local-rules directory is empty, so an existing `ai/local_rules/*.md` always wins over the remote — a clone can never overwrite rules that exist nowhere else. Clear the directory if you want the remote to take over.
+The private rules remote is only cloned when the local-rules directory is empty, so existing `*.md` files always win over the remote — a clone can never overwrite rules that exist nowhere else. Clear the directory if you want the remote to take over.
 
 ## Per-tool notes
 
@@ -132,27 +132,54 @@ The private rules remote is only cloned when the local-rules directory is empty,
 
 ### ai
 
-Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled from two layers so one set of rules can be reused everywhere without leaking anything private.
+Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled from opt-in modules plus a private layer, so one set of rules can be reused everywhere without leaking anything private and without forcing one person's opinions on anyone who clones this.
 
-- `ai/AGENTS.md` — the universal, shareable rules. Edit these in one place; every agent gets them.
-- `ai/local_rules/` — the private, per-context layer (work-specific rules, internal conventions). **The directory is tracked but its contents are ignored**, so the layer exists on every clone and never reaches this repo. Drop `*.md` files in and they get merged in locally, in filename order — prefix them (`10-`, `20-`) to control that order. **`README.md` is skipped**, so the directory can document itself without the documentation becoming instructions; this matters because a repo created through a web UI ships a boilerplate README, and it is markdown like everything else.
+- `ai/rules/` — the shareable modules. The directory is **globbed**, so adding a module means adding a file and nothing else. What ships:
+
+  | Module | Holds | Included when |
+  |---|---|---|
+  | `universal.md` | How this rules system itself works — chiefly that the agent files are generated, so edits belong in the repo | Always; it declares `required` |
+  | `daily-notes.md` | The daily-notes discipline: what to log, where, and when | declares `default=on` |
+  | `misc.md` | One person's general working rules — writing style, code conventions, commit gating | declares `default=off` |
+
+  The split is the point: you can inherit the daily-notes habit without inheriting the opinions.
+
+  **Each module declares its own metadata on line 1**, in an HTML comment that rendered markdown never shows:
+
+  ```markdown
+  <!-- ai-rules: order=40, default=off, prompt="Include the review-checklist rules" -->
+  ```
+
+  | Entry | Means | Default |
+  |---|---|---|
+  | `order=N` | sort position, for assembly *and* for the order `ai-setup` asks | 50 |
+  | `default=on` / `off` | the answer used before anyone has been asked | `off` |
+  | `required` | never asked about, never off | absent |
+  | `clobbers` | `ai-setup` names the files it will replace before asking | absent |
+  | `prompt="..."` | the question asked; quote it if it contains a comma | built from the `# ` heading |
+
+  Declaring nothing is valid — the module is then asked about, and off until you say yes. `ai-setup` asks about each module in `order` position and records the answers under `modules` in the config, in that same order. `ai-rules apply` wraps each one in markers naming its file, so the assembled document says where every section came from.
+
+  **A module the config switched on whose file has gone away is a hard error** — `ai-rules apply` writes nothing rather than quietly assembling rules that are short a whole discipline.
+- **The private layer** — work-specific rules, internal conventions. Lives at `~/.config/ai-notes/local_rules/` by default, **outside this repo on purpose**: cloning a private repo into a tracked directory here nests two repos, and the `.gitignore` that ships `ai/local_rules/` (`*` plus `!.gitignore`) then lands inside the clone, where it ignores every rule file the clone exists to carry. Drop `*.md` files in and they get merged in locally. **It reads exactly like `ai/rules/`** — same glob, same `README.md` skip, the same `<!-- ai-rules: order=N -->` declaration, and the same per-file markers naming where each rule came from. Ordering is by declared `order` then filename, so the `10-`/`20-` prefix convention still works as a tie-break. The one difference: nothing here is ever asked about, because a private file is machine-local and was put there on purpose — so it applies unless it declares `default=off`, which shelves it without deleting it. **`README.md` is skipped**, so the directory can document itself without the documentation becoming instructions; this matters because a repo created through a web UI ships a boilerplate README, and it is markdown like everything else. If a configured remote produces no rules — a repo holding only that README counts as empty — setup says so rather than reporting success with no private layer.
+- `ai/local_rules/` — the in-repo fallback, still gitignored so anything dropped there can never reach this repo. Nothing defaults to it any more; point `local_rules_dir` at it if you want it used. Rules left there while the config points elsewhere are reported, not silently ignored.
 - `ai/lib/`, `ai/bin/` — the assembler and its setup command.
 - `ai/tests/` — `python3 -m unittest discover -s ai/tests -t ai/tests`
 
 The two commands:
 
 - `ai-setup` — asks where things live (private rules remote, which agents, notes path), writes the answers to `~/.config/ai-notes/config.json`, then runs `ai-rules apply`. Re-running it edits settings: every prompt is pre-filled with what is already configured, so pressing enter keeps it. `--dry-run` reports what it would write and stops. Non-interactive when stdin is not a terminal, which is how `install.sh` drives it.
-- `ai-rules apply` — merges the two layers into **one** file at `~/.config/ai-notes/rules.md` and symlinks each agent's rules path to it, so nothing is duplicated and the agents cannot drift apart.
+- `ai-rules apply` — merges the selected modules and the private layer into **one** file at `~/.config/ai-notes/rules.md` and symlinks each agent's rules path to it, so nothing is duplicated and the agents cannot drift apart.
 
 #### Daily notes — asked about, not built yet
 
-`ai-setup` asks whether to enable daily-notes sync, and it defaults to **no**. Answer no and nothing else about notes is asked or recorded.
+`ai-setup` asks whether to include the daily-notes rules, and the module declares its default as **yes** — including it only appends a section, so it costs you nothing. Answer no and nothing else about notes is asked or recorded.
 
-The intent: a private git repo of dated work notes (`~/daily-notes/<date>/<project>.md`) kept in step across several machines, with the agent pulling before it writes so two machines cannot silently diverge, and stopping to ask on a real conflict rather than picking a winner. The rules layer already carries the nudge to keep those notes, wrapped in `notes-nudge` markers so it is stripped from the assembled rules on any machine where sync is off.
+The intent: a private git repo of dated work notes (`~/daily-notes/<date>/<project>.md`) kept in step across several machines, with the agent pulling before it writes so two machines cannot silently diverge, and stopping to ask on a real conflict rather than picking a winner. The `daily-notes.md` module already carries the nudge to keep those notes; on a machine where the module is off it is simply never assembled.
 
-None of that exists yet — there is no `daily-notes-sync` command. Until it lands, saying yes only records a path and turns the nudge on. Say no unless you are working on that feature.
+The sync half does not exist yet — there is no `daily-notes-sync` command. Until it lands, yes records a path and includes the rules; the notes themselves are still written by hand or by an agent following them.
 
-Anything already at an agent's path that this tool did not put there is moved into the backup directory first. That backup is written once and never overwritten — if one is already there the run stops and says so, because it holds the only copy of whatever was there before, while the assembled file can be rebuilt from the sources at any time. Remove it yourself once you are happy.
+Anything already at an agent's path that this tool did not put there is moved into a timestamped directory under `~/.dotfiles-backup/` first, and the run prints where. One directory per run, paths mirrored under it as they sit under `$HOME`, so nothing collides and nothing is overwritten. Nothing prunes it, so delete old ones yourself once you are happy.
 
 ## Troubleshooting
 

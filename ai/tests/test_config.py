@@ -30,9 +30,9 @@ class TestConfig(SandboxedTestCase):
         self.assertEqual(airules.config_get("nope", "DEFLT"), "DEFLT")
 
     def test_types_survive_the_roundtrip(self):
-        self.write_config(notes_enabled=False, agents=["claude", "codex"])
+        self.write_config(agents=["claude", "codex"])
 
-        self.assertIs(airules.config_get("notes_enabled"), False)
+        self.assertEqual(airules.config_get("agents"), ["claude", "codex"])
         self.assertEqual(airules.config_get("agents"), ["claude", "codex"])
 
     def test_file_is_valid_readable_json(self):
@@ -100,8 +100,67 @@ class TestConfigRecord(SandboxedTestCase):
 
         # A machine with no config yet has to be able to assemble anyway
         self.assertEqual(config.agents, ["claude"])
-        self.assertIs(config.notes_enabled, False)
         self.assertIsNone(config.notes_path)
+
+        # No answers at all, rather than a set of hard-coded per-module fields:
+        # what each module does by default is declared by the module, so a
+        # config that has never been asked simply says nothing.
+        self.assertEqual(config.modules, {})
+
+    def test_flat_module_flags_are_read_under_their_new_home(self):
+        # Two generations of config in one: `notes_enabled` and `misc_enabled`
+        # were top-level keys before per-module answers moved under `modules`.
+        # Ignoring them would read as "off" and drop whole modules out of the
+        # assembled rules on the next apply, saying nothing about it.
+        self.write_config(notes_enabled=True, misc_enabled=True)
+
+        self.assertEqual(airules.Config.load().modules, {"daily-notes": True, "misc": True})
+
+    def test_the_oldest_flat_flag_is_read_too(self):
+        # `universal_enabled` was what `misc_enabled` was called before the
+        # module it gates was renamed
+        self.write_config(universal_enabled=True)
+
+        self.assertIs(airules.Config.load().modules["misc"], True)
+
+    def test_flat_module_flags_do_not_survive_a_save(self):
+        self.write_config(notes_enabled=True, universal_enabled=True)
+
+        airules.Config.load().save()
+        written = json.loads(airules.config_path().read_text(encoding="utf-8"))
+
+        # Migrated, not duplicated: leaving both shapes on disk leaves a real
+        # question about which one a later reader is supposed to believe.
+        self.assertEqual(written["modules"], {"daily-notes": True, "misc": True})
+        for stale in ("notes_enabled", "misc_enabled", "universal_enabled"):
+            self.assertNotIn(stale, written)
+
+    def test_the_newest_key_wins_when_several_answer_one_module(self):
+        # All three shapes at once, disagreeing. `modules` is current, so it
+        # decides; between the two flat ones the newer name decides.
+        self.write_config(universal_enabled=True, misc_enabled=False)
+        self.assertIs(airules.Config.load().modules["misc"], False)
+
+        self.write_config(modules={"misc": True})
+        self.assertIs(airules.Config.load().modules["misc"], True)
+
+    def test_a_malformed_modules_value_is_ignored_not_fatal(self):
+        self.write_config(modules="not a mapping")
+
+        # One malformed setting must not stop every agent being written, on the
+        # same grounds as an unreadable `order` in a module's own declaration
+        self.assertEqual(airules.Config.load().modules, {})
+
+    def test_defaults_are_declared_once(self):
+        # load() must read its fallbacks off the record's own field defaults
+        # rather than repeat them. Two copies of a default only disagree on a
+        # machine with no config file — the one case nobody re-tests by hand.
+        declared = airules.Config(agents=list(airules.DEFAULT_AGENTS))
+        loaded   = airules.Config.load()
+
+        for name in ("agents", "modules", "local_rules_remote", "updated_at"):
+            with self.subTest(field=name):
+                self.assertEqual(getattr(loaded, name), getattr(declared, name))
 
     def test_round_trips_every_field(self):
         config = airules.Config.load()
@@ -109,7 +168,7 @@ class TestConfigRecord(SandboxedTestCase):
         config.ai_dir             = self.home / "ai"
         config.local_rules_dir    = self.home / "ai" / "local_rules"
         config.local_rules_remote = "git@example.com:me/rules.git"
-        config.notes_enabled      = True
+        config.modules            = {"daily-notes": True, "misc": False}
         config.notes_path         = self.home / "daily-notes"
         config.save()
 
@@ -119,7 +178,7 @@ class TestConfigRecord(SandboxedTestCase):
         self.assertEqual(loaded.ai_dir, self.home / "ai")
         self.assertEqual(loaded.local_rules_dir, self.home / "ai" / "local_rules")
         self.assertEqual(loaded.local_rules_remote, "git@example.com:me/rules.git")
-        self.assertIs(loaded.notes_enabled, True)
+        self.assertEqual(loaded.modules, {"daily-notes": True, "misc": False})
         self.assertEqual(loaded.notes_path, self.home / "daily-notes")
 
     def test_paths_come_back_as_paths(self):

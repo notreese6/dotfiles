@@ -3,7 +3,11 @@ import subprocess
 import unittest
 from base import SandboxedTestCase
 
-UNIVERSAL = "# Universal Rules\n\nAlways be concise.\n"
+NOTES_RULES = "## Daily notes\n\nNOTES_MARKER: pull before writing notes.\n"
+
+TOOL_RULES = '# Using these rules\n\nTOOL_MARKER: edit the repo, never the live file.\n'
+
+MISC = "# Misc Rules\n\nAlways be concise.\n"
 
 
 class TestInstallAiTarget(SandboxedTestCase):
@@ -27,11 +31,17 @@ class TestInstallAiTarget(SandboxedTestCase):
 
         super().setUp()
 
-        # AI_DIR rather than the repo's ai/, so these tests do not depend on
-        # ai/AGENTS.md, which Task 6 has not authored yet.
+        # AI_DIR rather than the repo's ai/, so these tests assert against
+        # fixtures they control rather than against whatever the real rule
+        # modules happen to say today.
         self.fake_ai = self.home / "aifix"
         (self.fake_ai / "local_rules").mkdir(parents=True)
-        (self.fake_ai / "AGENTS.md").write_text(UNIVERSAL, encoding="utf-8")
+        self.rules = self.fake_ai / "rules"
+        self.write_module(self.rules, "universal.md",   TOOL_RULES,  front="order=10, required")
+        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off, clobbers")
+        # This module declares default=on, so it is selected on every run
+        # here; leaving it out is now a hard failure rather than a silent skip.
+        self.write_module(self.rules, "daily-notes.md", NOTES_RULES, front="order=20, default=on")
 
         (self.fake_ai / "bin").mkdir()
         for name in ("ai-rules", "ai-setup"):
@@ -58,6 +68,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         env["AI_SETUP_NONINTERACTIVE"]  = "true"
         env["AI_SETUP_AGENTS"]          = "claude"
         env["AI_SETUP_LOCAL_RULES_DIR"] = str(self.fake_ai / "local_rules")
+        env.setdefault("AI_SETUP_UNIVERSAL", "yes")
         env.update(extra_env)
 
         return subprocess.run(
@@ -107,7 +118,15 @@ class TestInstallAiTarget(SandboxedTestCase):
         # ai-setup is that a fresh machine ends up with rules actually in place
         claude_md = self.home / ".claude" / "CLAUDE.md"
         self.assertTrue(claude_md.is_symlink())
-        self.assertIn("Always be concise.", claude_md.read_text(encoding="utf-8"))
+        text = claude_md.read_text(encoding="utf-8")
+
+        # The tool module and the notes module, because those are the two an
+        # unattended install ends up with: one has no switch, the other defaults
+        # on. The misc module is off unless someone answers yes, so asserting on
+        # it here would be asserting the opposite of the intended default.
+        self.assertIn("TOOL_MARKER", text)
+        self.assertIn("NOTES_MARKER", text)
+        self.assertNotIn("End of misc.", text)
 
     def test_rerun_is_idempotent(self):
         self.assertEqual(self.run_install("ai").returncode, 0)
@@ -121,9 +140,14 @@ class TestInstallAiTarget(SandboxedTestCase):
         self.assertTrue((self.home / ".claude" / "CLAUDE.md").is_symlink())
 
     def test_reports_failure_when_setup_cannot_finish(self):
-        # No AGENTS.md to assemble from, so ai-rules refuses and ai-setup passes
-        # that up.
-        (self.fake_ai / "AGENTS.md").unlink()
+        # Nothing to assemble at all, so ai-rules refuses and ai-setup passes
+        # that up. Emptied rather than deleted, because the modules directory is
+        # globbed: a deleted module is simply not discovered, while an emptied
+        # one is discovered and contributes nothing.
+        for module in self.rules.glob("*.md"):
+            module.write_text("", encoding="utf-8")
+        for private in (self.fake_ai / "local_rules").glob("*.md"):
+            private.unlink()
 
         result = self.run_install("ai")
 
@@ -193,6 +217,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         env["AI_SETUP_NONINTERACTIVE"]  = "true"
         env["AI_SETUP_AGENTS"]          = "claude"
         env["AI_SETUP_LOCAL_RULES_DIR"] = str(self.fake_ai / "local_rules")
+        env.setdefault("AI_SETUP_UNIVERSAL", "yes")
         env.setdefault("AI_SETUP_BACKUP_DIR", str(self.home / ".dotfiles-backup"))
 
         for key, value in overrides.items():

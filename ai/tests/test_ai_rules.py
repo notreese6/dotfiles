@@ -6,13 +6,13 @@ from pathlib import Path
 from base import SandboxedTestCase
 import airules
 
-UNIVERSAL = (
-    "# Universal Rules\n\nAlways be concise.\n\n"
-    + airules.NOTES_BEGIN
-    + "\nNOTES SYNC: pull before writing notes.\n"
-    + airules.NOTES_END
-    + "\n\nEnd of universal.\n"
-)
+TOOL_RULES = '# Using these rules\n\nTOOL_MARKER: edit the repo, never the live file.\n'
+
+MISC = "# Misc Rules\n\nAlways be concise.\n\nEnd of misc.\n"
+
+# The notes rules are their own module under ai/rules/, rather than a section
+# embedded in someone else's file.
+NOTES_RULES = "## Daily notes\n\nNOTES SYNC: pull before writing notes.\n"
 
 # Stands in for a live, hand-built rules file that predates any `apply` run
 PRIOR_RULES = "# Hand-built rules\n\nIrreplaceable. No backup exists.\n"
@@ -94,15 +94,19 @@ class TestAiRulesCli(SandboxedTestCase):
 
         self.fake_ai = self.home / "aifix"
         (self.fake_ai / "local_rules").mkdir(parents=True)
-        (self.fake_ai / "AGENTS.md").write_text(UNIVERSAL, encoding="utf-8")
+        self.rules = self.fake_ai / "rules"
+        self.write_module(self.rules, "universal.md",   TOOL_RULES,  front="order=10, required")
+        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off, clobbers")
         (self.fake_ai / "local_rules" / "10-first.md").write_text("LOCAL RULE ONE\n", encoding="utf-8")
         (self.fake_ai / "local_rules" / "20-second.md").write_text("LOCAL RULE TWO\n", encoding="utf-8")
+
+        self.write_module(self.rules, "daily-notes.md", NOTES_RULES, front="order=20, default=on")
 
         self.write_config(
             local_rules_dir = str(self.fake_ai / "local_rules"),
             agents          = ["claude"],
-            notes_enabled   = False,
         )
+        self.set_modules(daily_notes=False, misc=True)
 
     def run_cli(self, *args, **overrides):
         """
@@ -274,10 +278,33 @@ class TestAiRulesCli(SandboxedTestCase):
         self.assertEqual(claude_md.read_text(encoding="utf-8"), PRIOR_RULES)
         self.assertEqual(self.sandbox_backups(), [])
 
-    def test_notes_enabled_keeps_nudge(self):
-        self.write_config(notes_enabled=True)
+    def test_enabling_the_notes_module_includes_it(self):
+        self.set_modules(daily_notes=True)
         self.run_cli("apply")
-        self.assertIn("NOTES SYNC", (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"))
+
+        text = (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("NOTES SYNC", text)
+        self.assertEqual(text.count("NOTES SYNC"), 1)
+
+    def test_notes_disabled_leaves_the_layer_out(self):
+        self.set_modules(daily_notes=False)
+        self.run_cli("apply")
+
+        # The layer is skipped rather than stripped after the fact, so no
+        # markers are left behind either
+        text = (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertNotIn("NOTES SYNC", text)
+
+    def test_notes_layer_is_independent_of_the_universal_file(self):
+        # The whole point of the split: someone can take the notes rules without
+        # the rest of one person's universal opinions
+        (self.rules / "misc.md").write_text("# Only this\n\nNothing else.\n", encoding="utf-8")
+        self.set_modules(daily_notes=True)
+        self.run_cli("apply")
+
+        text = (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("NOTES SYNC", text)
+        self.assertIn("Nothing else.", text)
 
     def test_rerun_is_idempotent(self):
         self.run_cli("apply")
@@ -302,12 +329,14 @@ class TestAiRulesCli(SandboxedTestCase):
         self.run_cli("apply")
         self.assertNotIn(airules.LOCAL_END, (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"))
 
-    def test_missing_universal_fails_clearly(self):
-        (self.fake_ai / "AGENTS.md").unlink()
+    def test_no_rules_at_all_fails_clearly(self):
+        (self.rules / "misc.md").unlink()
+        for stale in (self.fake_ai / "local_rules").glob("*.md"):
+            stale.unlink()
 
         result = self.run_cli("apply")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("AGENTS.md", result.stdout + result.stderr)
+        self.assertIn("rules", result.stdout + result.stderr)
 
     def test_unknown_command_exits_nonzero(self):
         self.assertNotEqual(self.run_cli("bogus").returncode, 0)
@@ -392,30 +421,151 @@ class TestAiRulesCli(SandboxedTestCase):
                 for name in airules.known_agent_names():
                     self.assertIn(name, result.stderr)
 
-    def test_empty_universal_leaves_existing_rules_untouched(self):
+    def test_empty_modules_leave_existing_rules_untouched(self):
         claude_md = self.home / ".claude" / "CLAUDE.md"
         claude_md.parent.mkdir(parents=True)
         claude_md.write_text(PRIOR_RULES, encoding="utf-8")
 
-        # An AGENTS.md truncated to nothing assembles into a rules file with no
-        # rules in it, which must never replace the live one
-        (self.fake_ai / "AGENTS.md").write_text("", encoding="utf-8")
+        # A module truncated to nothing assembles into a rules file with no rules
+        # in it, which must never replace the live one
+        for module in (self.rules).glob("*.md"):
+            module.write_text("", encoding="utf-8")
+        for stale in (self.fake_ai / "local_rules").glob("*.md"):
+            stale.unlink()
 
         result = self.run_cli("apply")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(claude_md.read_text(encoding="utf-8"), PRIOR_RULES)
-        self.assertIn("empty", result.stderr)
+        self.assertIn("no rules selected or found", result.stderr)
 
-    def test_whitespace_only_universal_leaves_existing_rules_untouched(self):
+    def test_whitespace_only_modules_leave_existing_rules_untouched(self):
         claude_md = self.home / ".claude" / "CLAUDE.md"
         claude_md.parent.mkdir(parents=True)
         claude_md.write_text(PRIOR_RULES, encoding="utf-8")
 
-        (self.fake_ai / "AGENTS.md").write_text("  \n\n\t\n", encoding="utf-8")
+        # Every layer blanked, not just the module: the private layer counts as
+        # rules too, so leaving it would make this pass for the wrong reason
+        for module in (self.rules).glob("*.md"):
+            module.write_text("  \n\n\t\n", encoding="utf-8")
+        for stale in (self.fake_ai / "local_rules").glob("*.md"):
+            stale.write_text("  \n", encoding="utf-8")
 
         result = self.run_cli("apply")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(claude_md.read_text(encoding="utf-8"), PRIOR_RULES)
+
+    def test_every_module_combination_assembles_exactly_what_is_enabled(self):
+        # The full matrix, because "add a rule and it shows up" is only true for
+        # the modules this machine has switched on. A rule written into a module
+        # that is off is saved and then never reaches any agent, which looks
+        # exactly like success from the writer's side.
+        (self.rules / "misc.md").write_text("MISC_MARKER\n", encoding="utf-8")
+        (self.rules / "daily-notes.md").write_text("NOTES_MARKER\n", encoding="utf-8")
+        for stale in (self.fake_ai / "local_rules").glob("*.md"):
+            stale.unlink()
+        (self.fake_ai / "local_rules" / "10-p.md").write_text("LOCAL_MARKER\n", encoding="utf-8")
+
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+
+        for misc in (True, False):
+            for notes in (True, False):
+                with self.subTest(misc=misc, notes=notes):
+                    self.set_modules(misc=misc, daily_notes=notes)
+                    self.assertEqual(self.run_cli("apply").returncode, 0)
+
+                    text = claude_md.read_text(encoding="utf-8")
+                    self.assertEqual("MISC_MARKER" in text, misc)
+                    self.assertEqual("NOTES_MARKER" in text, notes)
+
+                    # Two layers have no switch, and they are the two a reader
+                    # can therefore always count on: the private rules, and the
+                    # tool's own rules about editing the source rather than the
+                    # generated file. Neither flag can turn either off.
+                    self.assertIn("LOCAL_MARKER", text)
+                    self.assertIn("TOOL_MARKER", text)
+
+    def test_the_private_layer_defaults_beside_the_config(self):
+        # No local_rules_dir at all, which is a config ai-setup has not written
+        # yet — apply still has to know where the private layer lives, and it
+        # must not be inside the repo tree.
+        self.write_config(local_rules_dir=None)
+
+        default = airules.default_local_rules_dir()
+        default.mkdir(parents=True, exist_ok=True)
+        (default / "10-default-place.md").write_text("DEFAULT PLACE RULE\n", encoding="utf-8")
+
+        self.assertEqual(self.run_cli("apply").returncode, 0)
+
+        text = (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("DEFAULT PLACE RULE", text)
+
+        # And the in-repo directory is not what it fell back to
+        self.assertNotIn("LOCAL RULE ONE", text)
+
+    def test_a_selected_module_with_no_file_stops_the_run(self):
+        claude_md = self.home / ".claude" / "CLAUDE.md"
+        claude_md.parent.mkdir(parents=True)
+        claude_md.write_text(PRIOR_RULES, encoding="utf-8")
+
+        self.set_modules(daily_notes=True)
+        (self.rules / "daily-notes.md").unlink()
+
+        result = self.run_cli("apply")
+
+        # A distinct status, not just nonzero: the caller has to be able to tell
+        # a broken install from an empty one without parsing the message. And
+        # nobody reads the message — that is the whole reason this stops rather
+        # than warning, so the exit status is what has to carry it.
+        self.assertEqual(result.returncode, airules.ExitStatus.MISSING_MODULE)
+        self.assertIn("daily-notes.md", result.stderr)
+
+        # Nothing written and nothing displaced. Assembling without the module
+        # would have replaced these rules with a copy silently missing it.
+        self.assertEqual(claude_md.read_text(encoding="utf-8"), PRIOR_RULES)
+        self.assertEqual(self.sandbox_backups(), [])
+
+    def test_the_missing_module_message_says_how_to_get_unstuck(self):
+        self.set_modules(daily_notes=True)
+        (self.rules / "daily-notes.md").unlink()
+
+        stderr = self.run_cli("apply").stderr
+
+        # Both ways out, because either can be the right one: the file was lost
+        # by accident, or the module genuinely is not wanted on this machine
+        self.assertIn(str(self.fake_ai / "rules"), stderr)
+        self.assertIn("Restore", stderr)
+        self.assertIn("config", stderr)
+
+    def test_a_module_turned_off_may_be_absent_without_complaint(self):
+        # The mirror of the test above, and the reason it checks a *selected*
+        # module: a fork that does not want the notes discipline deletes the
+        # file and turns the flag off, and that has to keep working.
+        self.set_modules(daily_notes=False)
+        (self.rules / "daily-notes.md").unlink()
+
+        self.assertEqual(self.run_cli("apply").returncode, 0)
+
+    def test_a_rule_added_to_a_disabled_module_never_reaches_the_agent(self):
+        self.set_modules(misc=False, daily_notes=True)
+
+        # Writing the rule succeeds; that is the trap. Only the assembly says
+        # whether an agent will ever see it.
+        (self.rules / "misc.md").write_text("BRAND_NEW_RULE\n", encoding="utf-8")
+        self.assertEqual(self.run_cli("apply").returncode, 0)
+
+        self.assertNotIn("BRAND_NEW_RULE",
+                         (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"))
+
+    def test_the_private_layer_reaches_the_agent_with_every_module_off(self):
+        self.set_modules(misc=False, daily_notes=False)
+        (self.fake_ai / "local_rules" / "50-new.md").write_text("PRIVATE_ADDITION\n", encoding="utf-8")
+
+        self.assertEqual(self.run_cli("apply").returncode, 0)
+
+        # Which is what makes local_rules the safe answer when someone asks for
+        # a rule and the module it belongs in is switched off
+        self.assertIn("PRIVATE_ADDITION",
+                      (self.home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"))
 
     def test_reports_the_directory_the_rules_came_from(self):
         result = self.run_cli("apply")
@@ -451,7 +601,7 @@ class TestAiRulesCli(SandboxedTestCase):
 
         self.assertEqual(self.run_cli("apply").returncode, 0)
 
-        (self.fake_ai / "AGENTS.md").write_text(revised_universal("TWO"), encoding="utf-8")
+        (self.rules / "misc.md").write_text(revised_universal("TWO"), encoding="utf-8")
 
         # The path is our own link by now, so there is nothing irreplaceable to
         # preserve and the run has no reason to stop. This is what keeps apply
@@ -522,7 +672,7 @@ class TestAiRulesCli(SandboxedTestCase):
             self.addCleanup(os.environ.pop, name, None)
 
         body = "# Universal\n\nEm dash — and a bullet •\n"
-        (self.fake_ai / "AGENTS.md").write_text(body, encoding="utf-8")
+        (self.rules / "misc.md").write_text(body, encoding="utf-8")
 
         # The rules are full of em dashes, and cron and systemd on the VMs run
         # with no locale set, where an unpinned encoding falls back to ASCII
@@ -609,24 +759,42 @@ class TestAiRulesCli(SandboxedTestCase):
         claude_md = self.home / ".claude" / "CLAUDE.md"
         claude_md.parent.mkdir(parents=True)
 
-        universal = self.fake_ai / "AGENTS.md"
+        modules = self.rules
+        locals_ = self.fake_ai / "local_rules"
+
+        def blank_every_layer():
+            """Leave every module and every private file present but empty."""
+            for path in list(modules.glob("*.md")) + list(locals_.glob("*.md")):
+                path.write_text("", encoding="utf-8")
+
+        def strip_private_and_blank_modules():
+            """Leave no private rules and no module text, so nothing assembles."""
+            blank_every_layer()
+            for stale in locals_.glob("*.md"):
+                stale.unlink()
 
         # Every failure apply_rules raises before opening a target. Reaching the
         # backup step on any of them would mean a target was opened after all.
         cases = (
-            ("missing universal",  lambda: universal.unlink()),
-            ("empty universal",    lambda: universal.write_text("", encoding="utf-8")),
-            ("no known agents",    lambda: self.write_config(agents=["claud", "codexx"])),
-            ("bad agents setting", lambda: self.write_config(agents=None)),
+            ("no layers at all",     strip_private_and_blank_modules),
+            ("all layers empty",     blank_every_layer),
+            ("selected module gone", lambda: (modules / "daily-notes.md").unlink()),
+            ("no known agents",      lambda: self.write_config(agents=["claud", "codexx"])),
+            ("bad agents setting",   lambda: self.write_config(agents=None)),
         )
 
         for label, break_it in cases:
             with self.subTest(case=label):
                 # Restored first so each case fails for its own reason, not for
                 # the damage the previous one left behind
-                universal.write_text(UNIVERSAL, encoding="utf-8")
+                self.write_module(modules, "universal.md",   TOOL_RULES,  front="order=10, required")
+                self.write_module(modules, "daily-notes.md", NOTES_RULES, front="order=20, default=on")
+                self.write_module(modules, "misc.md",        MISC,        front="order=30, default=off")
+                (locals_ / "10-first.md").write_text("LOCAL RULE ONE\n", encoding="utf-8")
                 claude_md.write_text(PRIOR_RULES, encoding="utf-8")
                 self.write_config(agents=["claude"])
+                self.set_modules(daily_notes=True, misc=True)
+
 
                 break_it()
 

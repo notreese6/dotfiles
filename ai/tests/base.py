@@ -146,3 +146,57 @@ class SandboxedTestCase(unittest.TestCase):
         data.update(settings)
 
         airules._config_write(data)
+
+    def set_modules(self, **answers):
+        """
+        Merge per-module answers into the sandboxed config.
+
+        Merges rather than replaces, so a test can flip one module without
+        restating the others — which `write_config(modules=...)` cannot do,
+        since that writes the whole mapping.
+
+        Args:
+            **answers: {str: bool} keyed by module stem with underscores in
+                place of dashes, e.g. `daily_notes=False` for "daily-notes",
+                since a dash cannot appear in a Python keyword argument.
+
+        Returns:
+            None
+
+        Raises:
+            OSError: the config file or its directory cannot be written.
+            ValueError: the existing config file is not valid JSON.
+        """
+
+        data    = airules.config_read()
+        modules = dict(data.get(airules.CONFIG_KEY_MODULES) or {})
+        modules.update({stem.replace("_", "-"): bool(value) for stem, value in answers.items()})
+
+        self.write_config(**{airules.CONFIG_KEY_MODULES: modules})
+
+    def write_module(self, rules_dir, name, body, front=""):
+        """
+        Write one rules module, with its declaration line if it has one.
+
+        Args:
+            rules_dir (pathlib.Path): the rules directory. Created if absent.
+            name (str): the module filename, e.g. "daily-notes.md".
+            body (str): the module's rules text.
+            front (str): what goes inside the `<!-- ai-rules: ... -->` comment,
+                e.g. "order=20, default=on". Empty writes no declaration, which
+                is the case of a module that takes every default.
+
+        Returns:
+            pathlib.Path: the file written.
+
+        Raises:
+            OSError: the directory or the file cannot be written.
+        """
+
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        path = rules_dir / name
+
+        declaration = f"{airules.FRONT_MATTER_PREFIX} {front} {airules.FRONT_MATTER_SUFFIX}\n\n" if front else ""
+        path.write_text(declaration + body, encoding="utf-8")
+
+        return path

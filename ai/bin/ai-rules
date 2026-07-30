@@ -26,7 +26,7 @@ def build_parser():
 
     parser = argparse.ArgumentParser(
         prog="ai-rules",
-        description="Assemble each configured agent's rules file from the universal and local layers.",
+        description="Assemble each configured agent's rules file from the selected rule modules and the private layer.",
     )
 
     # required=True makes a bare invocation argparse's own usage error rather
@@ -104,11 +104,11 @@ def run_apply():
         None
 
     Returns:
-        airules.ExitStatus: OK on success; NO_UNIVERSAL_RULES when the
-        universal rules file is missing or empty; NO_KNOWN_AGENTS when no
-        configured agent is recognized, so nothing was written;
-        BAD_AGENTS_SETTING when the `agents` setting is not a name or a list of
-        names.
+        airules.ExitStatus: OK on success; MISSING_MODULE when a selected rules
+        module has no file behind it; NO_RULES_FOUND when every selected layer
+        is absent or blank; NO_KNOWN_AGENTS when no configured agent is
+        recognized, so nothing was written; BAD_AGENTS_SETTING when the `agents`
+        setting is not a name or a list of names.
 
     Raises:
         OSError: a target directory cannot be created, or a read or write
@@ -125,9 +125,16 @@ def run_apply():
 
     try:
         result = airules.apply_rules(base)
+    # Ahead of FileNotFoundError, which it subclasses. A selected module with no
+    # file behind it is a broken install rather than missing input, and stopping
+    # here is the point: skipping it would write rules that are quietly short a
+    # whole discipline, and a nonzero exit halts a script that ignores the text.
+    except airules.MissingModuleError as exc:
+        print(f"[-] {exc}", file=sys.stderr)
+        return airules.ExitStatus.MISSING_MODULE
     except FileNotFoundError as exc:
         print(f"[-] {exc}", file=sys.stderr)
-        return airules.ExitStatus.NO_UNIVERSAL_RULES
+        return airules.ExitStatus.NO_RULES_FOUND
     except airules.NoAgentsError as exc:
         warn_unknown_agents(exc.unknown)
         valid = ", ".join(airules.known_agent_names())

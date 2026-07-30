@@ -23,7 +23,11 @@ ENV_AGENTS             = "AI_SETUP_AGENTS"
 ENV_LOCAL_RULES_DIR    = "AI_SETUP_LOCAL_RULES_DIR"
 ENV_LOCAL_RULES_REMOTE = "AI_SETUP_LOCAL_RULES_REMOTE"
 ENV_NOTES_PATH         = "AI_SETUP_NOTES_PATH"
-ENV_NOTES_ENABLED      = "AI_SETUP_NOTES_ENABLED"
+
+# One per module, built from its stem so a module added to the repo gets a
+# non-interactive override without this file being touched:
+# `daily-notes` -> AI_SETUP_MODULE_DAILY_NOTES.
+ENV_MODULE_TEMPLATE    = "AI_SETUP_MODULE_{stem}"
 ENV_BACKUP_DIR_ROOT    = "AI_SETUP_BACKUP_DIR"
 
 NOTES_DIRNAME = "daily-notes"
@@ -141,25 +145,232 @@ def ask_yes_no(question, default, env_key):
     """
     Ask a yes/no question, keeping the blank-is-the-default shape.
 
-    Phrased as a word with the current setting in brackets rather than as
-    `[y/N]`, so every prompt in this tool answers the same way: press enter to
-    keep what is shown, or type a new value.
+    Rendered `[Y/n]` or `[y/N]`, capital marking the default, which is the
+    convention people already read without thinking. Pressing enter keeps it.
 
     Args:
         question (str): the prompt text.
-        default (bool): the setting as it stands, shown in brackets.
+        default (bool): the setting as it stands; decides which letter is
+            capitalised and what a bare enter means.
         env_key (str): environment variable that overrides both.
 
     Returns:
-        bool: True for yes/y/true/1 in any case, False for anything else.
+        bool: True for yes/y/true/1 in any case, False for anything else, and
+        `default` when the prompt went unanswered.
 
     Raises:
         OSError: stdin cannot be read, or the prompt cannot be written.
     """
 
-    answer = ask(question, "yes" if default else "no", env_key)
+    shown  = "Y/n" if default else "y/N"
+    answer = ask(question, shown, env_key)
+
+    # ask() hands `shown` straight back when the user pressed enter or when this
+    # run cannot prompt at all. Either way the setting is unchanged.
+    if answer == shown:
+        return default
 
     return answer.strip().lower() in ("y", "yes", "true", "1")
+
+
+def announce_clobber(agents, home):
+    """
+    List the exact files taking the misc rules will replace.
+
+    Args:
+        agents (list of str): the agent names chosen a moment ago.
+        home (pathlib.Path): the user's home directory, for shortening paths.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdout cannot be written.
+    """
+
+    resolved = airules.agent_targets(agents)
+    existing = [t.path for t in resolved.targets if t.path.exists()]
+
+    if not existing:
+        return
+
+    # A blank line first, and the warning phrased as being about the question
+    # BELOW it. Printed between two prompts it otherwise reads as a consequence
+    # of the answer just given rather than of the one being asked for.
+    print()
+    print("[!] The next question clobbers these files, replacing whatever they hold now:")
+    for path in existing:
+        print(f"      {str(path).replace(str(home), '~')}")
+    print("    Each is copied into the backup directory first, so nothing is lost outright.")
+
+
+def warn_if_not_ssh(remote):
+    """
+    Point out an http(s) remote, which a headless clone often cannot use.
+
+    Args:
+        remote (str): the configured remote, or "" when there is none.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    if not remote.startswith(("http://", "https://")):
+        return
+
+    # Not an error: an http remote can work where the host allows anonymous
+    # read, or where a credential helper is configured. It is a warning because
+    # neither of those travels — install.sh runs this with no terminal, so a
+    # credential prompt there does not ask, it fails.
+    print(f"[-] {remote} is an http(s) remote. Cloning it needs credentials this tool cannot "
+          f"supply when run without a terminal, as install.sh does — prefer an ssh:// or git@ URL",
+          file=sys.stderr)
+
+
+def module_env_key(stem):
+    """
+    Build the environment variable that answers one module's question.
+
+    Args:
+        stem (str): the module's filename without ".md", e.g. "daily-notes".
+
+    Returns:
+        str: the variable name, e.g. "AI_SETUP_MODULE_DAILY_NOTES". Dashes
+        become underscores because a dash cannot appear in a shell variable
+        name, so `AI_SETUP_MODULE_DAILY-NOTES` could never be set.
+
+    Raises:
+        None
+    """
+
+    return ENV_MODULE_TEMPLATE.format(stem=stem.upper().replace("-", "_"))
+
+
+def ask_about_modules(config, base, home):
+    """
+    Ask one question per optional rules module, in the modules' declared order.
+
+    Required modules are not asked about, and a module already answered in the
+    config is pre-filled with that answer, so a re-run is an edit rather than a
+    fresh start. Answers are written back to `config.modules` in the order asked,
+    which is the order they then appear in the config file and in the assembly.
+
+    Args:
+        config (airules.Config): mutated in place — `.modules`, and `.notes_path`
+            when the daily-notes module ends up on.
+        base (pathlib.Path): the `ai/` directory, whose `rules/` is scanned.
+        home (pathlib.Path): the user's home directory, for path defaults and
+            for shortening the paths named in the clobber warning.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdin cannot be read, or a module cannot be read.
+        UnicodeDecodeError: a module is not valid UTF-8.
+    """
+
+    discovered = airules.discover_modules(base / airules.RULES_DIRNAME)
+
+    # Rebuilt rather than updated in place so a module deleted from the repo
+    # drops out of the config instead of lingering as an answer to a question
+    # nobody asks any more.
+    answers = {}
+
+    for module in airules.optional_modules(discovered):
+        # Named before the question, not after, so the files are on screen while
+        # the question is being read rather than after it has been answered.
+        if module.does_clobber:
+            announce_clobber(config.agents, home)
+
+        answers[module.stem] = ask_yes_no(
+            module.prompt,
+            module.is_selected(config.modules),
+            module_env_key(module.stem),
+        )
+
+        # Asked here rather than after the loop so it lands directly under the
+        # question it depends on. Only asked when the answer will be used: asking
+        # where notes live on a machine that will not keep them is a question
+        # with no consequence, and a setup that asks those trains you to stop
+        # reading the ones that matter.
+        if module.stem == airules.NOTES_MODULE_STEM and answers[module.stem]:
+            config.notes_path = absolute_under(ask(
+                "Daily-notes path",
+                str(config.notes_path or home / NOTES_DIRNAME),
+                ENV_NOTES_PATH,
+            ), home)
+
+    config.modules = answers
+
+
+def warn_if_local_rules_are_stranded(local_dir, base):
+    """
+    Point out private rules sitting where nothing will read them.
+
+    The default moved out of the repo tree, so `ai/local_rules/*.md` is no
+    longer read unless the config points at it. Anyone who followed the older
+    instructions has rules there that now reach no agent — and a rule silently
+    not applied looks exactly like a rule being followed.
+
+    Args:
+        local_dir (pathlib.Path): the directory actually configured.
+        base (pathlib.Path): the `ai/` directory, holding the in-repo layer.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: a directory exists but cannot be listed.
+    """
+
+    in_repo = base / airules.LOCAL_RULES_DIRNAME
+
+    # Nothing to say when that is the configured directory, nor when it holds no
+    # rules of its own — the shipped `.gitignore` placeholder is not a rule.
+    if in_repo == local_dir or not any(in_repo.glob(airules.LOCAL_RULES_GLOB)):
+        return
+
+    stranded = sorted(p.name for p in in_repo.glob(airules.LOCAL_RULES_GLOB))
+
+    print(f"[-] {in_repo} holds {len(stranded)} rules file(s) that nothing reads: "
+          f"{', '.join(stranded)}", file=sys.stderr)
+    print(f"[-] the private layer is read from {local_dir}. Move them there, or point "
+          f"local_rules_dir at {in_repo}", file=sys.stderr)
+
+
+def warn_if_remote_yielded_no_rules(remote, local_dir):
+    """
+    Point out a configured private remote that produced no rules.
+
+    Not a failure: a private repo can legitimately be empty on the day it is
+    created, and one holding only the boilerplate README a web UI ships is the
+    same situation. It is worth saying out loud because the run otherwise
+    reports success and leaves no private layer at all, which is exactly what a
+    working setup looks like from the outside.
+
+    Args:
+        remote (str): the configured remote, or "" when there is none.
+        local_dir (pathlib.Path): the directory the private layer is read from.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: the directory exists but cannot be read.
+        UnicodeDecodeError: a file there is not valid UTF-8.
+    """
+
+    if not remote or airules.read_local_rules(local_dir).strip():
+        return
+
+    print(f"[-] {remote} produced no rules in {local_dir}, so there is no private layer",
+          file=sys.stderr)
+    print(f"[-] a repo holding only a README counts as empty here — README.md is skipped "
+          f"deliberately. Push at least one other *.md and re-run", file=sys.stderr)
 
 
 def detect_agents(home):
@@ -268,35 +479,22 @@ def gather(base, home):
     """
 
     # Loaded rather than built from scratch, so every setting this tool does not
-    # ask about — notes_enabled today, anything a later tool adds — survives the
-    # save untouched instead of being reset to a default.
+    # ask about survives the save untouched instead of being reset to a default.
     config = airules.Config.load()
 
     config.local_rules_remote = ask(
-        "Private local-rules git remote (blank = none)",
+        "Private local-rules git remote — SSH URL like ssh://git@host/you/repo.git (blank = none)",
         config.local_rules_remote,
         ENV_LOCAL_RULES_REMOTE,
     )
+    warn_if_not_ssh(config.local_rules_remote)
     config.agents = ask(
         f"Agent targets, space-separated ({', '.join(airules.known_agent_names())})",
         " ".join(config.agents) or detect_agents(home),
         ENV_AGENTS,
     ).split()
-    config.notes_enabled = ask_yes_no(
-        "Enable daily-notes sync",
-        config.notes_enabled,
-        ENV_NOTES_ENABLED,
-    )
+    ask_about_modules(config, base, home)
 
-    # Only asked when the answer will be used. Asking where notes live on a
-    # machine that will not sync them is a question with no consequence, and a
-    # setup that asks those trains you to stop reading the ones that matter.
-    if config.notes_enabled:
-        config.notes_path = absolute_under(ask(
-            "Daily-notes path",
-            str(config.notes_path or home / NOTES_DIRNAME),
-            ENV_NOTES_PATH,
-        ), home)
     config.backup_dir = absolute_under(ask(
         "Backup directory",
         str(config.backup_dir or airules.default_backup_root()),
@@ -307,7 +505,7 @@ def gather(base, home):
     config.local_rules_dir = Path(
         os.environ.get(ENV_LOCAL_RULES_DIR)
         or config.local_rules_dir
-        or base / airules.LOCAL_RULES_DIRNAME
+        or airules.default_local_rules_dir()
     )
 
     return config
@@ -419,7 +617,7 @@ def run_setup(should_write):
     for line in config.describe():
         print(f"[*] {line}")
 
-    if config.notes_enabled and config.notes_path:
+    if config.modules.get(airules.NOTES_MODULE_STEM) and config.notes_path:
         warn_if_tcc(config.notes_path, home)
 
     if not should_write:
@@ -434,6 +632,9 @@ def run_setup(should_write):
             print("[-] nothing was written; fix the remote or clear the setting to continue",
                   file=sys.stderr)
             return airules.ExitStatus.CLONE_FAILED
+
+    warn_if_remote_yielded_no_rules(config.local_rules_remote, config.local_rules_dir)
+    warn_if_local_rules_are_stranded(config.local_rules_dir, base)
 
     config.save()
 
