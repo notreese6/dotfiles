@@ -149,6 +149,14 @@ class ExitStatus(IntEnum):
             setup stopped before writing any settings.
         MISSING_MODULE: a selected rules module has no file behind it. Nothing
             was written, because writing would silently drop that module's rules.
+        SYNC_CONFLICT: a notes sync hit a real merge conflict. The rebase was
+            aborted, so the working tree is exactly as it was, and a person has
+            to decide which side wins.
+        SYNC_LOCKED: another notes sync is already running against the same
+            directory, so this one did nothing rather than interleave git
+            commands with it.
+        NOT_A_REPO: the notes directory is not a git repository. Nothing was
+            created — making a repo out of someone's work is their decision.
     """
 
     OK                 = 0
@@ -157,6 +165,9 @@ class ExitStatus(IntEnum):
     BAD_AGENTS_SETTING = 4
     CLONE_FAILED       = 6
     MISSING_MODULE     = 7
+    SYNC_CONFLICT      = 8
+    SYNC_LOCKED        = 9
+    NOT_A_REPO         = 10
 
 
 class RulesRoot(Enum):
