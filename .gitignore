@@ -26,3 +26,7 @@
 
 # Working design/plan docs — kept local, not shared.
 docs/
+
+# Local-only: carries no secrets itself, but pairs with a private pattern
+# file and is not worth shipping.
+ai/bin/repo-scan
