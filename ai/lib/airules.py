@@ -95,6 +95,7 @@ CONFIG_KEY_LOCAL_RULES_DIR    = "local_rules_dir"
 CONFIG_KEY_LOCAL_RULES_REMOTE = "local_rules_remote"
 CONFIG_KEY_MODULES            = "modules"
 CONFIG_KEY_NOTES_PATH         = "notes_path"
+CONFIG_KEY_NOTES_REMOTE       = "notes_remote"
 CONFIG_KEY_UPDATED_AT         = "updated_at"
 
 # Every per-module answer lives under CONFIG_KEY_MODULES, keyed by module stem,
@@ -739,6 +740,9 @@ class Config:
             own front matter — which is what lets a module added to the repo
             take effect without anyone editing a config first.
         notes_path (pathlib.Path or None): where the daily-notes repo lives.
+        notes_remote (str): git remote the notes repo syncs with, or "" when
+            there is none — in which case notes stay local to this machine and
+            nothing syncs them anywhere.
         updated_at (str): when this config was last saved, UTC ISO-8601. Set by
             save(); never written by hand.
         extra (dict): any key in the file this class does not know about, kept
@@ -759,6 +763,7 @@ class Config:
     local_rules_remote: str            = ""
     modules:            dict           = field(default_factory=dict)
     notes_path:         Optional[Path] = None
+    notes_remote:       str            = ""
     updated_at:         str            = ""
     extra:              dict           = field(default_factory=dict)
 
@@ -772,6 +777,7 @@ class Config:
         CONFIG_KEY_LOCAL_RULES_REMOTE,
         CONFIG_KEY_MODULES,
         CONFIG_KEY_NOTES_PATH,
+        CONFIG_KEY_NOTES_REMOTE,
         CONFIG_KEY_UPDATED_AT,
 
         # The superseded flat keys are owned too, so they are left out of
@@ -817,6 +823,7 @@ class Config:
             local_rules_remote = data.get(CONFIG_KEY_LOCAL_RULES_REMOTE, defaults.local_rules_remote),
             modules            = _module_answers(data),
             notes_path         = _as_path(data.get(CONFIG_KEY_NOTES_PATH)),
+            notes_remote       = data.get(CONFIG_KEY_NOTES_REMOTE, defaults.notes_remote),
             updated_at         = data.get(CONFIG_KEY_UPDATED_AT, defaults.updated_at),
             extra              = {k: v for k, v in data.items() if k not in cls.OWNED_KEYS},
         )
@@ -846,6 +853,7 @@ class Config:
             CONFIG_KEY_AGENTS:             list(self.agents),
             CONFIG_KEY_LOCAL_RULES_REMOTE: self.local_rules_remote,
             CONFIG_KEY_MODULES:            dict(self.modules),
+            CONFIG_KEY_NOTES_REMOTE:       self.notes_remote,
             CONFIG_KEY_UPDATED_AT:         self.updated_at,
         })
 
@@ -885,6 +893,7 @@ class Config:
             ("backup dir",         self.backup_dir or default_backup_root()),
             ("local rules remote", self.local_rules_remote),
             ("notes path",         self.notes_path),
+            ("notes remote",       self.notes_remote),
         ]
 
         # One row per answered module, in config order, so what gets printed

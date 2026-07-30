@@ -107,6 +107,49 @@ class TestConfigRecord(SandboxedTestCase):
         # config that has never been asked simply says nothing.
         self.assertEqual(config.modules, {})
 
+    def test_notes_remote_defaults_to_none_configured(self):
+        # "" rather than None: absent and "explicitly nothing" mean the same
+        # here, and a str keeps every caller off an isinstance check.
+        self.assertEqual(airules.Config.load().notes_remote, "")
+
+    def test_notes_remote_appears_next_to_the_notes_path(self):
+        config              = airules.Config.load()
+        config.notes_path   = self.home / "daily-notes"
+        config.notes_remote = "ssh://git@example.com/me/notes.git"
+
+        labels = [line.split(":")[0].strip() for line in config.describe()]
+
+        # Adjacent on purpose: a path with no remote is the local-only case, and
+        # the two lines are what tell you which case you are in.
+        self.assertEqual(labels[labels.index("notes path") + 1], "notes remote")
+
+    def test_extra_holds_only_keys_the_record_does_not_own(self):
+        # Every owned key present in the file at once, plus one genuinely
+        # unknown key, so this fails if OWNED_KEYS ever drifts from the fields.
+        self.write_config(
+            agents             = ["claude"],
+            ai_dir             = str(self.home / "ai"),
+            backup_dir         = str(self.home / "b"),
+            local_rules_dir    = str(self.home / "lr"),
+            local_rules_remote = "ssh://git@example.com/me/rules.git",
+            modules            = {"daily-notes": True},
+            notes_path         = str(self.home / "n"),
+            notes_remote       = "ssh://git@example.com/me/notes.git",
+            updated_at         = "2026-01-01T00:00:00Z",
+            some_future_key    = "kept",
+        )
+
+        extra = airules.Config.load().extra
+
+        # A key that is both a real field and in `extra` is stored twice, and
+        # the copies can disagree. Today to_dict happens to overwrite one with
+        # the other; that is an accident of ordering, not a guarantee.
+        for owned in airules.Config.OWNED_KEYS:
+            with self.subTest(key=owned):
+                self.assertNotIn(owned, extra)
+
+        self.assertEqual(extra, {"some_future_key": "kept"})
+
     def test_flat_module_flags_are_read_under_their_new_home(self):
         # Two generations of config in one: `notes_enabled` and `misc_enabled`
         # were top-level keys before per-module answers moved under `modules`.
@@ -158,7 +201,7 @@ class TestConfigRecord(SandboxedTestCase):
         declared = airules.Config(agents=list(airules.DEFAULT_AGENTS))
         loaded   = airules.Config.load()
 
-        for name in ("agents", "modules", "local_rules_remote", "updated_at"):
+        for name in ("agents", "modules", "local_rules_remote", "notes_remote", "updated_at"):
             with self.subTest(field=name):
                 self.assertEqual(getattr(loaded, name), getattr(declared, name))
 
@@ -170,6 +213,7 @@ class TestConfigRecord(SandboxedTestCase):
         config.local_rules_remote = "git@example.com:me/rules.git"
         config.modules            = {"daily-notes": True, "misc": False}
         config.notes_path         = self.home / "daily-notes"
+        config.notes_remote       = "ssh://git@example.com/me/notes.git"
         config.save()
 
         loaded = airules.Config.load()
@@ -180,6 +224,7 @@ class TestConfigRecord(SandboxedTestCase):
         self.assertEqual(loaded.local_rules_remote, "git@example.com:me/rules.git")
         self.assertEqual(loaded.modules, {"daily-notes": True, "misc": False})
         self.assertEqual(loaded.notes_path, self.home / "daily-notes")
+        self.assertEqual(loaded.notes_remote, "ssh://git@example.com/me/notes.git")
 
     def test_paths_come_back_as_paths(self):
         config           = airules.Config.load()
