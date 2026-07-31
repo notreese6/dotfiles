@@ -54,6 +54,77 @@ a repository, read it anyway; it is still the notes.
 notes for that project" and "the configured path is empty" are three different
 answers, and only the first is ever surprising.
 
+## Prioritizing TODOs — markers, dates, and when to surface them
+
+Every item under `## TODOs` carries one of four markers. They sort in this order,
+and a TODO list is **always** written sorted:
+
+| Marker | Means | Date |
+|---|---|---|
+| `[!]` | **URGENT** — a hard deadline inside 7 days, or blocked/blocking someone right now | **required** |
+| `[>]` | **NEXT** — the thing to pick up next. Important, no hard date | optional |
+| `[ ]` | **OPEN** — real work, will happen, not next | optional |
+| `[~]` | **LATER** — worth keeping, no commitment | none |
+
+```markdown
+## TODOs
+- [!] by 2026-08-14 — finish the auth migration on both controllers (bug 1234567)
+- [!] blocked — post the unblock note on the review that has been stuck a week
+- [>] commit + MR the poller phantom-trigger fix
+- [ ] pull the unclaimed triage queue
+- [~] prune the backup directory
+```
+
+**Sort order within a tier:** dated items first, by date ascending, then undated
+items in the order they were already in. Re-sorting must never churn a line that
+did not need to move.
+
+**Dates are the mechanism, not decoration.** Write `by YYYY-MM-DD` immediately
+after the marker — that is what makes a deadline greppable and sortable. Convert
+"end of June" or "next Friday" to a real date as you write it; a relative date in
+a note read three weeks later is worse than no date at all.
+
+- A dated item **promotes to `[!]` on its own** once it is within 7 days.
+- Past its date it becomes `[!] OVERDUE since YYYY-MM-DD`. Never leave a stale
+  `by` date sitting there looking like it is still ahead.
+
+**`[!]` is almost never** — the same discipline as the `[!]` log tag. If six
+things are urgent then none of them are, and the surfacing below becomes
+wallpaper that gets scrolled past. `[>]` is where "important" normally lives.
+Before marking something `[!]`, ask whether it should stop me mid-scroll.
+
+**Surfacing — once per session per project, not once per prompt.** The first time
+a session touches a project (reading its notes, writing them, or doing work that
+belongs to it), surface that project's `[!]` items and anything dated within 7
+days. Nothing else, and not again in that session unless something changes or I
+ask for it.
+
+This is deliberately session-scoped with no stored timestamp. A "last surfaced"
+stamp in `current/<project>.md` would rewrite the file every time it is merely
+*read*, manufacturing cross-machine sync conflicts for no benefit. A session is
+already about a work block, so once per session lands near once or twice a day
+on its own.
+
+**`## In Progress` uses the same markers** so one scan finds everything, but it is
+**not** force-sorted — its order carries the narrative of how the work went. Mark
+an in-progress item `[!]` when it is blocked or has a date bearing down on it.
+
+**Why:** a deadline written into prose is invisible. One project's rollup carried
+a hard external deadline for days as an ordinary sentence in an ordinary bullet,
+indistinguishable from a note about something already finished — and it was two
+days out before anyone noticed. The marker and the date exist so a time-sensitive
+item announces itself instead of waiting to be re-read.
+
+**How to apply:** assign a marker whenever you add or touch a TODO — never write
+a bare `- ` bullet under `## TODOs`. When you touch any TODO in a file, re-sort
+that whole list before saving. When a date comes up in conversation ("the
+migration is the 15th"), convert it to `by YYYY-MM-DD` and attach it right then.
+
+**Dated files are history — never re-prioritize them.** These markers apply to
+`current/<project>.md` and to newly written entries. A past `<date>/<project>.md`
+records what was true that day; if something was a TODO then, it stays a TODO
+there even though it has since been done. Reconcile `current/`, never the archive.
+
 ## Daily notes upkeep (nudge after a big task)
 
 After finishing a **substantial task** — a feature/fix that lands, a non-trivial investigation or root-cause, a commit/MR/merge, a meaningful decision — record it in my daily notes. This is for milestones, not every turn: skip small/trivial steps and pure Q&A.

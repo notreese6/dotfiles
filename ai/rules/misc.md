@@ -307,6 +307,40 @@ So before saving anything to a memory, ask **"is this only true here?"** If it i
 
 **If a memory already holds something that should be global, move it** — put it in the right module, run `ai-rules apply`, and delete the memory file and its `MEMORY.md` line. Two copies is worse than either one, because they drift and nothing reconciles them.
 
+## Adding to any list I keep — read it first, then place the item
+
+Whenever you add an item to a list I maintain — a TODO list, a tracker, a
+checklist, a set of rules — **read what is already there before writing.** Then:
+
+- **Reconcile against it.** If the new item overlaps something already on the
+  list, that is not a new entry. Update the existing one **in place**, keeping
+  whichever wording is more accurate and folding in what is genuinely new.
+- **Place it deliberately.** Put it where it belongs in the list's own order —
+  by priority, by section, next to the item it relates to. Never default to
+  appending at the bottom because that is the easy edit.
+- **Retire what the new item supersedes.** If adding this makes an older entry
+  wrong or dead, say so and remove it in the same edit. Two entries that
+  disagree is worse than either one alone.
+
+**Never rewrite history to do it.** A dated or archived record says what was
+true when it was written; leave it exactly as it is, even when later events
+proved it wrong. Reconcile the *live* view instead — for notes that means
+`current/<project>.md` and today's dated file are fair game and every earlier
+dated file is not. Anything already committed, sent, or filed is history too.
+
+**Why:** a list that only ever grows stops being read, which defeats the point of
+keeping it. The failure mode is concrete. One project's notes carried three TODOs
+twice over, each pair a slightly different diagnosis of the same problem, because
+each was appended without reading the list first — so the older, already-corrected
+diagnosis sat there looking exactly as current as the right one. Another project's
+live rollup had grown to 45 entries, all but two of them finished work, which made
+the two that mattered invisible.
+
+**How to apply:** before adding, read the whole list. Ask "is this already here in
+another form?" If yes, edit that entry. If no, decide where it goes rather than
+where the cursor is. Applies to the two specific cases already covered below and
+in the daily-notes rules — this is the general form, not a replacement for either.
+
 ## Before adding a rule, find out whether it already exists
 
 The rules are one document by the time an agent reads them, so a second rule on a subject that already has one is not an addition — it is a fork. Two near-identical rules drift, and nothing reconciles them.
