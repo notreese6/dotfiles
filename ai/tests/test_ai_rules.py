@@ -96,7 +96,7 @@ class TestAiRulesCli(SandboxedTestCase):
         (self.fake_ai / "local_rules").mkdir(parents=True)
         self.rules = self.fake_ai / "rules"
         self.write_module(self.rules, "universal.md",   TOOL_RULES,  front="order=10, required")
-        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off, clobbers")
+        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off")
         (self.fake_ai / "local_rules" / "10-first.md").write_text("LOCAL RULE ONE\n", encoding="utf-8")
         (self.fake_ai / "local_rules" / "20-second.md").write_text("LOCAL RULE TWO\n", encoding="utf-8")
 

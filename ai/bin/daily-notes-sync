@@ -270,9 +270,16 @@ def sync_within_lock(directory, message):
         print("[+] pushed")
         return airules.ExitStatus.OK
 
+    # "Could not push" would be wrong here: there is nowhere to push to, which
+    # is a coherent way to use this and not a failure of anything.
+    if not notesync.has_upstream(directory):
+        print("[*] no notes remote configured, so nothing syncs — your notes are "
+              "committed locally and that is all this can do")
+        return airules.ExitStatus.OK
+
     # Deliberately OK. The note is committed; only its delivery is pending, and
     # exiting non-zero here would fail an agent's turn over a wifi drop.
-    print("[-] could not push; the commit is safe locally and will go out next sync",
+    print("[-] could not reach the remote; the commit is safe locally and will go out next sync",
           file=sys.stderr)
 
     return airules.ExitStatus.OK

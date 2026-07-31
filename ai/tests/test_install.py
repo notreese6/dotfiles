@@ -39,7 +39,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         (self.fake_ai / "local_rules").mkdir(parents=True)
         self.rules = self.fake_ai / "rules"
         self.write_module(self.rules, "universal.md",   TOOL_RULES,  front="order=10, required")
-        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off, clobbers")
+        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off")
         # This module declares default=on, so it is selected on every run
         # here; leaving it out is now a hard failure rather than a silent skip.
         self.write_module(self.rules, "daily-notes.md", NOTES_RULES, front="order=20, default=on")
@@ -332,6 +332,89 @@ class TestInstallAiTarget(SandboxedTestCase):
         self.assertIn("~/.vimrc", out)
         self.assertLess(out.index("~/.vimrc"), out.index("? vim ["))
 
+    def test_an_already_installed_target_says_so_rather_than_nothing_is_there(self):
+        # Install it, so every destination is our own symlink.
+        self.run_install_on_a_terminal("vim", answer="\n" * 4)
+        self.assertTrue((self.home / ".vimrc").is_symlink())
+
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        # "nothing of yours is there to replace" reads as "the file does not
+        # exist", which is flatly wrong about a working symlink — and it is the
+        # steady state, so it is the message seen most often.
+        self.assertIn("already installed from this repo", out)
+        self.assertNotIn("no vim config", out)
+
+    def test_a_target_with_nothing_installed_does_not_claim_it_is_installed(self):
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        self.assertIn("nothing of yours would be replaced", out)
+        self.assertNotIn("already installed from this repo", out)
+
+    def test_a_partly_installed_target_claims_neither(self):
+        # tmux owns three files. Install them, then remove one, which is the
+        # mixed state: some ours, some absent, none of them theirs.
+        self.run_install_on_a_terminal("tmux", answer="\n" * 4)
+        (self.home / ".tmux" / "scripts" / "clip.sh").unlink()
+
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        # Saying "you have no tmux config" here would be untrue, and saying
+        # "already installed" would be too. Both claims are about presence; the
+        # question the reader has is what they lose, and the answer is nothing.
+        self.assertIn("nothing of yours would be replaced", out)
+
+    def test_an_already_ours_link_is_recognised_through_a_symlinked_repo_path(self):
+        import os
+
+        # A repo reached by a symlinked path spells its own files differently
+        # from what readlink reports — on macOS /var vs /private/var does this
+        # to every temp directory. Compared as raw strings, files we installed
+        # ourselves come back as "these are YOURS and get replaced".
+        alias = self.home / "repo-alias"
+        os.symlink(self.repo, alias)
+
+        self.run_install_on_a_terminal("vim", answer="\n" * 4)
+        vimrc = self.home / ".vimrc"
+        vimrc.unlink()
+        vimrc.symlink_to(alias / "vim" / "vimrc")
+
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        self.assertNotIn("~/.vimrc", out)
+        self.assertIn("already installed from this repo", out)
+
+    def test_everything_at_risk_is_listed_before_the_first_question(self):
+        for name, body in ((".vimrc", '" mine\n'), (".bashrc", "# mine\n")):
+            (self.home / name).write_text(body, encoding="utf-8")
+
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        # The per-target lists come at each decision; this is the whole picture,
+        # which is what you want before answering the first one.
+        head = out[:out.index("? tmux")]
+        self.assertIn("would be replaced if you say yes to everything", head)
+        self.assertIn("~/.vimrc", head)
+        self.assertIn("~/.bashrc", head)
+
+    def test_the_agent_rules_files_are_mentioned_up_front_too(self):
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        # They are not in any target's link list — the ai target links three
+        # commands and ai-setup writes these — so an up-front list built only
+        # from those lists would omit the file that matters most.
+        head = out[:out.index("? tmux")]
+        self.assertIn("CLAUDE.md", head)
+        self.assertIn("append", head)
+
+    def test_the_ai_target_says_what_the_three_commands_do(self):
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        # "AI rules tooling" says nothing a reader can decide on
+        self.assertIn("ai-rules", out)
+        self.assertIn("daily-notes-sync", out)
+        self.assertIn("your AI agents read", out)
+
     def run_install_on_a_terminal(self, *args, answer="n\n", **overrides):
         """
         Run install.sh with a real pty on stdin, so its prompts fire.
@@ -446,9 +529,9 @@ class TestInstallAiTarget(SandboxedTestCase):
         for target in ("tmux", "vim", "bash"):
             self.assertIn(f"replace your {target} config with this repo's", out)
 
-        # And the ai target is described for what it is, since it does not
-        # replace a config of yours at all
-        self.assertIn("install the AI rules tooling", out)
+        # And the ai target is described by what it installs, since "AI rules
+        # tooling" is not something a reader can decide on
+        self.assertIn("install three commands", out)
 
     def test_personal_targets_are_off_unless_asked_for(self):
         out = self.run_install_on_a_terminal(answer="\n" * 8)

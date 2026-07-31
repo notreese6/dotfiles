@@ -25,6 +25,7 @@ ENV_LOCAL_RULES_DIR    = "AI_SETUP_LOCAL_RULES_DIR"
 ENV_LOCAL_RULES_REMOTE = "AI_SETUP_LOCAL_RULES_REMOTE"
 ENV_NOTES_PATH         = "AI_SETUP_NOTES_PATH"
 ENV_NOTES_REMOTE       = "AI_SETUP_NOTES_REMOTE"
+ENV_RULES_MODE         = "AI_SETUP_RULES_MODE"
 
 # One per module, built from its stem so a module added to the repo gets a
 # non-interactive override without this file being touched:
@@ -175,37 +176,6 @@ def ask_yes_no(question, default, env_key):
     return answer.strip().lower() in ("y", "yes", "true", "1")
 
 
-def announce_clobber(agents, home):
-    """
-    List the exact files taking the misc rules will replace.
-
-    Args:
-        agents (list of str): the agent names chosen a moment ago.
-        home (pathlib.Path): the user's home directory, for shortening paths.
-
-    Returns:
-        None
-
-    Raises:
-        OSError: stdout cannot be written.
-    """
-
-    resolved = airules.agent_targets(agents)
-    existing = [t.path for t in resolved.targets if t.path.exists()]
-
-    if not existing:
-        return
-
-    # A blank line first, and the warning phrased as being about the question
-    # BELOW it. Printed between two prompts it otherwise reads as a consequence
-    # of the answer just given rather than of the one being asked for.
-    print()
-    print("[!] The next question clobbers these files, replacing whatever they hold now:")
-    for path in existing:
-        print(f"      {str(path).replace(str(home), '~')}")
-    print("    Each is copied into the backup directory first, so nothing is lost outright.")
-
-
 def warn_if_not_ssh(remote):
     """
     Point out an http(s) remote, which a headless clone often cannot use.
@@ -283,11 +253,6 @@ def ask_about_modules(config, base, home):
     answers = {}
 
     for module in airules.optional_modules(discovered):
-        # Named before the question, not after, so the files are on screen while
-        # the question is being read rather than after it has been answered.
-        if module.does_clobber:
-            announce_clobber(config.agents, home)
-
         answers[module.stem] = ask_yes_no(
             module.prompt,
             module.is_selected(config.modules),
@@ -305,8 +270,11 @@ def ask_about_modules(config, base, home):
                 str(config.notes_path or home / NOTES_DIRNAME),
                 ENV_NOTES_PATH,
             ), home)
+            print("    Blank is fine: notes are still written, still committed locally by")
+            print("    daily-notes-sync, and nothing else changes — they just do not reach")
+            print("    another machine. Add a remote later and it starts syncing.")
             config.notes_remote = ask(
-                "Daily-notes git remote — SSH URL, and private (blank = notes stay on this machine)",
+                "Daily-notes git remote — SSH URL, and private (blank = local only)",
                 config.notes_remote,
                 ENV_NOTES_REMOTE,
             )
@@ -459,6 +427,58 @@ def report_notes_repo(config):
     return False
 
 
+def ask_rules_mode(config, home):
+    """
+    Ask whether to replace the reader's rules files or append to them.
+
+    Only asked when there is something to lose. With no existing file, the two
+    modes differ in nothing a reader would notice, and a question whose answer
+    changes nothing teaches people to stop reading the questions.
+
+    Args:
+        config (airules.Config): mutated in place — `.rules_mode`.
+        home (pathlib.Path): the user's home directory, for shortening paths.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdin cannot be read, or a path cannot be inspected.
+        BadAgentsError: the configured agents cannot be resolved.
+    """
+
+    resolved = airules.agent_targets(config.agents)
+    existing = [t.path for t in resolved.targets
+                if t.path.exists() and not t.path.is_symlink()]
+
+    if not existing:
+        config.rules_mode = airules.RULES_MODE_CLOBBER
+        return
+
+    print()
+    print("[!] You already have rules in these files:")
+    for path in existing:
+        print(f"      {str(path).replace(str(home), '~')}")
+    print()
+    print("    clobber  — replace each with a link to this repo's assembled rules.")
+    print("               Your own rules stop being read. They are copied to the")
+    print("               backup directory first, but the live file is only ours.")
+    print("    additive — keep your file exactly as it is and append the sections")
+    print("               you asked for below, between markers. Re-running replaces")
+    print("               that appended region and never touches your own text.")
+
+    answer = ask(
+        f"How should we treat them ({airules.RULES_MODE_CLOBBER}/{airules.RULES_MODE_ADDITIVE})",
+        config.rules_mode,
+        ENV_RULES_MODE,
+    ).strip().lower()
+
+    # Anything unrecognised keeps what is configured rather than guessing. The
+    # guess that costs something is "clobber", so it is not the one to default
+    # to when the reader typed something the tool did not understand.
+    config.rules_mode = answer if answer in airules.RULES_MODES else config.rules_mode
+
+
 def detect_agents(home):
     """
     Guess which agents are installed, to pre-fill the agents prompt.
@@ -579,6 +599,11 @@ def gather(base, home):
         " ".join(config.agents) or detect_agents(home),
         ENV_AGENTS,
     ).split()
+    # After the agents are chosen, because their names decide which files these
+    # are, and before the module questions, because what the reader keeps is a
+    # bigger decision than what goes into what they keep.
+    ask_rules_mode(config, home)
+
     ask_about_modules(config, base, home)
 
     config.backup_dir = absolute_under(ask(

@@ -399,11 +399,11 @@ class TestAssemble(SandboxedTestCase):
 
     def test_front_matter_parses_flags_values_and_quoted_commas(self):
         front = airules.parse_front_matter(
-            '<!-- ai-rules: order=30, default=off, clobbers, prompt="Take these, all of them" -->\n# T\n')
+            '<!-- ai-rules: order=30, default=off, extra, prompt="Take these, all of them" -->\n# T\n')
 
         self.assertEqual(front["order"], "30")
         self.assertEqual(front["default"], "off")
-        self.assertIs(front["clobbers"], True)
+        self.assertIs(front["extra"], True)
 
         # The comma inside the quotes is content. Without that the prompt would
         # be truncated at the comma and the rest read as a bogus key.

@@ -77,7 +77,13 @@ def report_written(written):
     """
 
     for record in written:
-        print(f"[+] linked {record.target}")
+        # Two different things happen to a target, and saying "linked" for both
+        # would describe an append as a replacement — exactly the thing someone
+        # choosing additive mode wanted not to happen.
+        if record.is_appended:
+            print(f"[+] appended to {record.target}, keeping what was already there")
+        else:
+            print(f"[+] linked {record.target}")
 
         # None whenever there was nothing worth preserving — the path was absent,
         # or was already our link. Named in full because this is the only copy

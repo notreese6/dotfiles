@@ -210,7 +210,7 @@ would_replace() {
     # -e is false for a broken symlink, so -L too: a dangling link is still
     # something of the user's that we are about to overwrite.
     if [ -e "$dst" ] || [ -L "$dst" ]; then
-      [ "$(resolve_link "$dst")" = "$src" ] || echo "$dst"
+      [ "$(resolve_link "$dst")" = "$(physical_path "$src")" ] || echo "$dst"
     fi
   done 3<<EOF
 $(links_for "$1")
@@ -218,13 +218,63 @@ EOF
 }
 
 
+# ---- already_ours: is this target fully installed already? ---
+# True when every destination exists and already points where we would point
+# it. Distinct from would_replace being empty, which is also true when the
+# files simply are not there — "nothing of yours is there to replace" reads as
+# "the file does not exist", and saying that about a working symlink is wrong.
+#
+# Args: $1 target name.
+# Returns: 0 when every destination is already our link, 1 otherwise
+#          (including a target with no destinations at all).
+already_ours() {
+  local src dst total=0 ours=0
+
+  while IFS='|' read -r src dst <&3; do
+    [ -n "$dst" ] || continue
+    total=$((total + 1))
+    [ "$(resolve_link "$dst")" = "$(physical_path "$src")" ] && ours=$((ours + 1))
+  done 3<<EOF
+$(links_for "$1")
+EOF
+
+  [ "$total" -gt 0 ] && [ "$ours" -eq "$total" ]
+}
+
+
 # ---- resolve_link: where a symlink points, or "" ------------
-# `readlink -f` is GNU-only, so this reads the one hop we care about.
+# `readlink -f` is GNU-only, so this reads the one hop we care about and
+# normalises it, because the two sides of the comparison can spell the same
+# file differently: on macOS /var is itself a symlink to /private/var, so a link
+# recorded as one and a source computed as the other never match as strings, and
+# a file we already own would be reported as one about to be lost.
 #
 # Args: $1 a path.
-# Prints: the link target for a symlink, otherwise nothing.
+# Prints: the link target for a symlink with its directory resolved, otherwise
+#         nothing.
 resolve_link() {
-  [ -L "$1" ] && readlink "$1"
+  [ -L "$1" ] || return 0
+
+  physical_path "$(readlink "$1")"
+}
+
+
+# ---- physical_path: a path with its directory resolved -------
+# Only the directory is resolved. Resolving the leaf too would follow the very
+# link being compared and make everything look identical to itself.
+#
+# Args: $1 a path.
+# Prints: the same path with symlinked parents collapsed, or unchanged when the
+#         parent does not exist.
+physical_path() {
+  local parent leaf
+
+  parent="$(dirname "$1")"
+  leaf="$(basename "$1")"
+
+  [ -d "$parent" ] || { echo "$1"; return 0; }
+
+  echo "$(cd "$parent" && pwd -P)/$leaf"
 }
 
 
@@ -240,7 +290,7 @@ describes_target() {
     tmux) echo "replace your tmux config with this repo's" ;;
     vim)  echo "replace your vim config with this repo's" ;;
     bash) echo "replace your bash config with this repo's" ;;
-    ai)   echo "install the AI rules tooling (asks separately before touching any rules file)" ;;
+    ai)   echo "install three commands: ai-rules and ai-setup (build the rules your AI agents read) and daily-notes-sync (keeps ~/daily-notes in step across machines)" ;;
     *)    echo "$1" ;;
   esac
 }
@@ -302,8 +352,13 @@ want_target() {
     warn "$(describes_target "$target") — these are YOURS and get replaced:"
     printf "%s\n" "$clobbers" | sed "s|^$HOME|~|; s|^|      |" >&2
     echo "      (a copy of each goes to $BACKUP_DIR/)" >&2
+  elif already_ours "$target"; then
+    info "$(describes_target "$target") — already installed from this repo, so this changes nothing"
   else
-    info "$(describes_target "$target") — nothing of yours is there to replace"
+    # Deliberately about risk, not presence. This branch also covers a target
+    # that is partly installed — some files ours, some absent — where claiming
+    # "you have no $target config" would be plainly untrue.
+    info "$(describes_target "$target") — nothing of yours would be replaced"
   fi
 
   if [ "$default" = "false" ]; then
@@ -504,6 +559,39 @@ echo "  These are notreese's dotfiles. tmux, vim and bash put NOTREESE'S config 
 echo "  so they are off unless you say yes. ai installs the tooling and asks again before it"
 echo "  touches any rules file."
 echo "  Pick a subset by naming it (e.g. ./install.sh vim ai), or see every file first with --dry-run."
+
+# Listed before anything is asked, so the reader knows the full cost of saying
+# yes to everything before answering the first question. The per-target lists
+# below repeat the relevant ones at the moment of each decision; this is the
+# whole picture, which is the thing you want before you start.
+if ! $EXPLICIT_TARGETS; then
+  at_risk=""
+  for t in "${TARGETS[@]}"; do
+    found="$(would_replace "$t")"
+    [ -n "$found" ] && at_risk="$at_risk$found
+"
+  done
+
+  if [ -n "$at_risk" ]; then
+    echo
+    warn "these files of yours would be replaced if you say yes to everything:"
+    printf "%s" "$at_risk" | sed "s|^$HOME|~|; s|^|      |"
+    echo "      (each is copied to $BACKUP_DIR/ first, and each target is asked about separately)"
+  fi
+
+  # The agent rules files are not in the lists above, because the ai target
+  # links three commands and it is ai-setup that writes those files. Saying so
+  # here anyway: leaving the biggest one off a list headed "what gets replaced"
+  # would be the omission that matters most.
+  case " ${TARGETS[*]} " in
+    *" ai "*)
+      echo
+      echo "  The ai target also writes your AI agent rules files (~/.claude/CLAUDE.md and"
+      echo "  the like). It asks separately whether to replace those with a link to this"
+      echo "  repo's rules, or to keep your file and append to it."
+      ;;
+  esac
+fi
 $ASSUME_YES && warn "--yes: replacing existing files without asking (originals still go to $BACKUP_DIR/)"
 echo
 

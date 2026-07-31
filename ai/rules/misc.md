@@ -1,4 +1,4 @@
-<!-- ai-rules: order=30, default=off, clobbers, prompt="Inherit ALL of notreese's general working rules, clobbering the files above" -->
+<!-- ai-rules: order=30, default=off, prompt="Inherit ALL of notreese's general working rules" -->
 
 # Global instructions
 

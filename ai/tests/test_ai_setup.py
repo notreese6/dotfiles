@@ -39,7 +39,7 @@ class TestAiSetup(SandboxedTestCase):
         (self.fake_ai / "local_rules").mkdir(parents=True)
         self.rules = self.fake_ai / "rules"
         self.write_module(self.rules, "universal.md",   TOOL_RULES,  front="order=10, required")
-        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off, clobbers")
+        self.write_module(self.rules, "misc.md",        MISC,        front="order=30, default=off")
         # This module declares default=on, so it is selected on every run
         # here; leaving it out is now a hard failure rather than a silent skip.
         self.write_module(self.rules, "daily-notes.md", NOTES_RULES, front="order=20, default=on")
@@ -191,30 +191,6 @@ class TestAiSetup(SandboxedTestCase):
         self.run_setup(AI_SETUP_AGENTS="claude codex")
 
         self.assertEqual(airules.config_get("agents"), ["claude", "codex"])
-
-    def test_a_module_that_clobbers_names_the_files_first(self):
-        claude_md = self.home / ".claude" / "CLAUDE.md"
-        claude_md.parent.mkdir(parents=True)
-        claude_md.write_text("mine\n", encoding="utf-8")
-
-        output = self.run_setup().stdout
-
-        # misc.md declares `clobbers`, so the files it would replace have to be
-        # on screen before the question, not described after the answer
-        self.assertIn("clobbers these files", output)
-        self.assertIn("~/.claude/CLAUDE.md", output)
-
-    def test_no_clobber_warning_when_no_module_declares_one(self):
-        claude_md = self.home / ".claude" / "CLAUDE.md"
-        claude_md.parent.mkdir(parents=True)
-        claude_md.write_text("mine\n", encoding="utf-8")
-
-        # Same file present, but nothing left that replaces it. A warning shown
-        # anyway is a warning people learn to scroll past.
-        (self.rules / "misc.md").unlink()
-        self.set_modules(misc=False)
-
-        self.assertNotIn("clobbers these files", self.run_setup().stdout)
 
     def test_a_module_dropped_into_the_repo_is_picked_up_with_no_code_change(self):
         self.write_module(self.rules, "security.md",

@@ -185,7 +185,6 @@ Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled fr
   | `order=N` | sort position, for assembly *and* for the order `ai-setup` asks | 50 |
   | `default=on` / `off` | the answer used before anyone has been asked | `off` |
   | `required` | never asked about, never off | absent |
-  | `clobbers` | `ai-setup` names the files it will replace before asking | absent |
   | `prompt="..."` | the question asked; quote it if it contains a comma | built from the `# ` heading |
 
   Declaring nothing is valid — the module is then asked about, and off until you say yes. `ai-setup` asks about each module in `order` position and records the answers under `modules` in the config, in that same order. `ai-rules apply` wraps each one in markers naming its file, so the assembled document says where every section came from.

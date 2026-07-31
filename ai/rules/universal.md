@@ -47,7 +47,6 @@ config key, no prompt to write. Give it a declaration on line 1:
 | `order=N` | sort position, for assembly *and* for the order `ai-setup` asks | 50 |
 | `default=on` / `off` | the answer used before anyone has been asked | `off` |
 | `required` | never asked about, never off | absent |
-| `clobbers` | `ai-setup` names the files it will replace before asking | absent |
 | `prompt="..."` | the question asked; quote it if it contains a comma | built from the `# ` heading |
 
 Declaring nothing is valid: the file is then asked about and off until you say
@@ -59,8 +58,14 @@ file, so the assembled document says where each section came from.
 declaration line, same ordering, same markers. One difference: nothing there is
 ever asked about, because a private file is machine-local and was put there
 deliberately. So it applies unless it declares `default=off`, which is how a
-private rule is shelved without deleting it. `required`, `clobbers` and `prompt`
-have nothing to act on there and are unused.
+private rule is shelved without deleting it. `required` and `prompt` have
+nothing to act on there and are unused.
+
+**Your agent files are replaced whatever you answer.** Configuring an agent is
+what points its rules file at the assembled one; the module questions decide what
+goes *into* that file, not whether it replaces yours. Saying no to every module
+still leaves a symlink where your file was — just with less in it. `ai-setup`
+says so before it asks anything, and the original goes to the backup directory.
 
 **Two things are hard errors rather than skips**, because a rule silently missing
 looks exactly like a rule being followed:
