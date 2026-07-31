@@ -23,7 +23,7 @@ rule written into it is saved and then never reaches any agent:
 | Private — an employer, an internal host, a codename | the private layer, `~/.config/ai-notes/local_rules/*.md` by default (`local_rules_dir` in the config says where) | Always. This layer has no switch |
 | About how this rules system itself works | `ai/rules/universal.md` | Always — it declares `required` |
 | About keeping notes | `ai/rules/daily-notes.md` | `modules."daily-notes"` is true |
-| General, shareable, and one person's opinion | `ai/rules/misc.md` | `modules.misc` is true |
+| General, shareable, and notreese's opinion | `ai/rules/misc.md` | `modules.misc` is true |
 | A subject none of those covers | a **new** `ai/rules/<name>.md` | `modules.<name>` is true |
 
 **Check before writing, not after.** `ai-setup --dry-run` prints every module's

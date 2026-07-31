@@ -92,7 +92,7 @@ Recommended (used by some configs but not strictly required):
 
 ### What a bare `./install.sh` asks
 
-**These are one person's dotfiles.** `tmux`, `vim` and `bash` do not install those programs — they put *this repo's* config where *yours* is. Most people cloning this will not want that, so **they are off unless you say yes**:
+**These are notreese's dotfiles.** `tmux`, `vim` and `bash` do not install those programs — they put *this repo's* config where *yours* is. Most people cloning this will not want that, so **they are off unless you say yes**:
 
 ```
 [!] replace your bash config with this repo's — these are YOURS and get replaced:
@@ -162,7 +162,7 @@ The private rules remote is only cloned when the local-rules directory is empty,
 
 ### ai
 
-Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled from opt-in modules plus a private layer, so one set of rules can be reused everywhere without leaking anything private and without forcing one person's opinions on anyone who clones this.
+Shared rules for AI coding agents (Claude Code, Codex CLI, Cursor), assembled from opt-in modules plus a private layer, so one set of rules can be reused everywhere without leaking anything private and without forcing notreese's opinions on anyone who clones this.
 
 - `ai/rules/` — the shareable modules. The directory is **globbed**, so adding a module means adding a file and nothing else. What ships:
 

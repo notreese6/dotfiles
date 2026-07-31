@@ -297,7 +297,7 @@ class TestAiRulesCli(SandboxedTestCase):
 
     def test_notes_layer_is_independent_of_the_universal_file(self):
         # The whole point of the split: someone can take the notes rules without
-        # the rest of one person's universal opinions
+        # the rest of notreese's universal opinions
         (self.rules / "misc.md").write_text("# Only this\n\nNothing else.\n", encoding="utf-8")
         self.set_modules(daily_notes=True)
         self.run_cli("apply")

@@ -7,7 +7,7 @@ is true in the config, which it is by default — the module declares `default=o
 since including it only appends a section.
 
 Take this repo and you inherit the notes discipline on its own: nothing here
-depends on `misc.md`, which is one person's general opinions and is off unless
+depends on `misc.md`, which is notreese's general opinions and is off unless
 you ask for it.
 
 ## Daily notes upkeep (nudge after a big task)

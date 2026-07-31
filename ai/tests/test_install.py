@@ -435,9 +435,9 @@ class TestInstallAiTarget(SandboxedTestCase):
         result = self.run_install("--dry-run")
 
         # Someone cloning this needs to know before the first prompt that these
-        # are one person's preferences, not a neutral setup script. "Installing
+        # are notreese's own preferences, not a neutral setup script. "Installing
         # tmux" reads as installing the program; it does neither.
-        self.assertIn("one person's dotfiles", result.stdout)
+        self.assertIn("notreese's dotfiles", result.stdout)
         self.assertIn("YOURS", result.stdout)
 
     def test_the_prompt_says_replace_rather_than_install(self):
@@ -454,7 +454,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         out = self.run_install_on_a_terminal(answer="\n" * 8)
 
         # Enter at every prompt must leave someone else's machine as it was.
-        # These are one person's preferences; the default cannot be to take them.
+        # These are notreese's preferences; the default cannot be to take them.
         for target in ("tmux", "vim", "bash"):
             self.assertIn(f"? {target} [y/N]", out)
         self.assertIn("? ai [Y/n]", out)

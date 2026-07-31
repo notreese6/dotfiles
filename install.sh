@@ -230,7 +230,7 @@ resolve_link() {
 
 # ---- describes_target: what a target actually does to you ----
 # "install tmux" is not what any of these do — tmux is already installed or it
-# is not, and nothing here changes that. What they do is put one person's config
+# is not, and nothing here changes that. What they do is put notreese's config
 # where yours is. The prompt says so.
 #
 # Args: $1 target name.
@@ -246,8 +246,8 @@ describes_target() {
 }
 
 
-# ---- personal_target: is this one person's config? -----------
-# The three dotfile targets are one person's preferences and are off unless
+# ---- personal_target: is this notreese's own config? --------
+# The three dotfile targets are notreese's own preferences and are off unless
 # asked for, the same way the misc rules module is: taking them replaces what
 # you already use, and a default that costs the reader something should be the
 # one they have to choose. The ai target only links three commands into
@@ -275,7 +275,7 @@ want_target() {
 
   default="$(configured_target "$target")"
 
-  # Never answered before: one person's config is off unless asked for.
+  # Never answered before: notreese's config is off unless asked for.
   if [ -z "$default" ] && personal_target "$target"; then
     default=false
   fi
@@ -500,7 +500,7 @@ install_ai() {
 # Names the targets rather than their files: --dry-run already lists every path
 # exactly, and repeating the list here is a second copy that would drift.
 info "Targets: ${TARGETS[*]}"
-echo "  These are one person's dotfiles. tmux, vim and bash put THEIR config where YOURS is,"
+echo "  These are notreese's dotfiles. tmux, vim and bash put NOTREESE'S config where YOURS is,"
 echo "  so they are off unless you say yes. ai installs the tooling and asks again before it"
 echo "  touches any rules file."
 echo "  Pick a subset by naming it (e.g. ./install.sh vim ai), or see every file first with --dry-run."
