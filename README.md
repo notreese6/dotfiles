@@ -90,6 +90,24 @@ Recommended (used by some configs but not strictly required):
 
 - `eza` — pretty file listings (`brew install eza`)
 
+### What a bare `./install.sh` asks
+
+A bare run installs `tmux vim bash ai`, and **asks about each one first** — naming the exact files it would replace before the question, so you decide knowing what it costs:
+
+```
+[!] installing bash replaces these, and a copy of each goes to ~/.dotfiles-backup/20260730-183900/:
+      ~/.bashrc
+ ?  install bash [Y/n]
+```
+
+- **Answer no and that target is not touched at all** — no links, no backups, nothing.
+- **Your answer is remembered** in `~/.config/ai-notes/config.json`, so a re-run pre-fills it: a declined target comes back as `[y/N]` and stays declined, including on unattended re-runs.
+- **Only files at risk are listed.** Anything already pointing at this repo is not a loss, so it is left out — otherwise the warning would fire on every routine re-run and stop being read.
+- **Naming targets skips the questions.** `./install.sh vim ai` has already said which ones you want; those runs confirm file by file instead.
+- `--yes` answers everything yes, `--dry-run` reports and asks nothing.
+
+Whatever gets replaced goes to `~/.dotfiles-backup/<timestamp>/` either way.
+
 ### Before running the `ai` target
 
 Nothing has to exist up front — `./install.sh ai` works on a bare machine and asks for the rest. What it asks, and what you need ready if you want to answer it:

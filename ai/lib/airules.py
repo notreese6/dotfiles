@@ -96,6 +96,7 @@ CONFIG_KEY_LOCAL_RULES_REMOTE = "local_rules_remote"
 CONFIG_KEY_MODULES            = "modules"
 CONFIG_KEY_NOTES_PATH         = "notes_path"
 CONFIG_KEY_NOTES_REMOTE       = "notes_remote"
+CONFIG_KEY_TARGETS            = "targets"
 CONFIG_KEY_UPDATED_AT         = "updated_at"
 
 # Every per-module answer lives under CONFIG_KEY_MODULES, keyed by module stem,
@@ -751,6 +752,11 @@ class Config:
             own front matter — which is what lets a module added to the repo
             take effect without anyone editing a config first.
         notes_path (pathlib.Path or None): where the daily-notes repo lives.
+        targets (dict): {str: bool} one stored answer per install.sh target —
+            "tmux", "vim", "bash", "ai". A target missing from here has never
+            been answered, and install.sh asks. Kept beside the rest so a
+            re-run pre-fills rather than asking cold, the same way the rule
+            modules do.
         notes_remote (str): git remote the notes repo syncs with, or "" when
             there is none — in which case notes stay local to this machine and
             nothing syncs them anywhere.
@@ -775,6 +781,7 @@ class Config:
     modules:            dict           = field(default_factory=dict)
     notes_path:         Optional[Path] = None
     notes_remote:       str            = ""
+    targets:            dict           = field(default_factory=dict)
     updated_at:         str            = ""
     extra:              dict           = field(default_factory=dict)
 
@@ -789,6 +796,7 @@ class Config:
         CONFIG_KEY_MODULES,
         CONFIG_KEY_NOTES_PATH,
         CONFIG_KEY_NOTES_REMOTE,
+        CONFIG_KEY_TARGETS,
         CONFIG_KEY_UPDATED_AT,
 
         # The superseded flat keys are owned too, so they are left out of
@@ -835,6 +843,7 @@ class Config:
             modules            = _module_answers(data),
             notes_path         = _as_path(data.get(CONFIG_KEY_NOTES_PATH)),
             notes_remote       = data.get(CONFIG_KEY_NOTES_REMOTE, defaults.notes_remote),
+            targets            = _bool_map(data.get(CONFIG_KEY_TARGETS)),
             updated_at         = data.get(CONFIG_KEY_UPDATED_AT, defaults.updated_at),
             extra              = {k: v for k, v in data.items() if k not in cls.OWNED_KEYS},
         )
@@ -865,6 +874,7 @@ class Config:
             CONFIG_KEY_LOCAL_RULES_REMOTE: self.local_rules_remote,
             CONFIG_KEY_MODULES:            dict(self.modules),
             CONFIG_KEY_NOTES_REMOTE:       self.notes_remote,
+            CONFIG_KEY_TARGETS:            dict(self.targets),
             CONFIG_KEY_UPDATED_AT:         self.updated_at,
         })
 
@@ -909,6 +919,7 @@ class Config:
 
         # One row per answered module, in config order, so what gets printed
         # grows with the directory instead of with a hand-maintained list here.
+        rows.extend((f"target {name}", is_wanted) for name, is_wanted in self.targets.items())
         rows.extend((f"module {stem}", is_enabled) for stem, is_enabled in self.modules.items())
 
         rows.append(("config file", config_path()))
@@ -934,6 +945,30 @@ def _as_path(value):
     """
 
     return Path(value) if value else None
+
+
+def _bool_map(value):
+    """
+    Coerce a config value into a {str: bool} mapping, or nothing.
+
+    Args:
+        value: whatever was in the config file under the key. Anything that is
+            not a mapping is discarded rather than raising, on the same grounds
+            as an unreadable module `order`: one malformed setting should not
+            stop an install or an assembly.
+
+    Returns:
+        dict: {str: bool} in the file's order. Empty when `value` is not a
+        mapping.
+
+    Raises:
+        None
+    """
+
+    if not isinstance(value, dict):
+        return {}
+
+    return {str(key): bool(entry) for key, entry in value.items()}
 
 
 def _module_answers(data):
@@ -965,10 +1000,7 @@ def _module_answers(data):
         if old_key in data:
             answers.setdefault(stem, bool(data[old_key]))
 
-    stored = data.get(CONFIG_KEY_MODULES)
-    if isinstance(stored, dict):
-        for stem, is_enabled in stored.items():
-            answers[stem] = bool(is_enabled)
+    answers.update(_bool_map(data.get(CONFIG_KEY_MODULES)))
 
     return answers
 

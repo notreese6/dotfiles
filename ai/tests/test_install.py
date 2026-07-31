@@ -2,6 +2,7 @@ import os
 import subprocess
 import unittest
 from base import SandboxedTestCase
+import airules
 
 NOTES_RULES = "## Daily notes\n\nNOTES_MARKER: pull before writing notes.\n"
 
@@ -199,6 +200,137 @@ class TestInstallAiTarget(SandboxedTestCase):
         # The rejection names what IS valid, so the list has to stay in step
         # with the dispatcher rather than drifting behind it
         self.assertIn("ai", result.stdout + result.stderr)
+
+    def test_each_target_is_asked_about_and_names_what_it_replaces(self):
+        (self.home / ".vimrc").write_text('" my own vimrc\n', encoding="utf-8")
+
+        # Bare run, so every target is asked about. "n" to all of them, so
+        # nothing here can touch a file.
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        for target in ("tmux", "vim", "bash", "ai"):
+            self.assertIn(f"install {target}", out, f"{target} was never asked about")
+
+        # Named before the question, not after the answer. The point is to
+        # decide knowing what it costs.
+        self.assertIn("~/.vimrc", out)
+        self.assertLess(out.index("~/.vimrc"), out.index("install vim"))
+
+    def test_declining_a_target_leaves_its_files_completely_alone(self):
+        vimrc = self.home / ".vimrc"
+        vimrc.write_text('" my own vimrc\n', encoding="utf-8")
+
+        self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        self.assertFalse(vimrc.is_symlink())
+        self.assertEqual(vimrc.read_text(encoding="utf-8"), '" my own vimrc\n')
+
+    def test_a_declined_target_is_remembered_and_defaults_to_no(self):
+        self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        self.assertIs(airules.Config.load().targets.get("vim"), False)
+
+        # A re-run must not quietly re-ask as though the answer were yes: the
+        # bracket capital is the only thing telling you what enter will do.
+        out = self.run_install_on_a_terminal(answer="\n" * 8)
+        self.assertIn("install vim [y/N]", out)
+
+    def test_naming_a_target_skips_the_question_entirely(self):
+        # `./install.sh vim` has already said which one you want. Asking again
+        # is a question with one sensible answer, and those teach people to
+        # stop reading the ones that matter.
+        out = self.run_install_on_a_terminal("vim", answer="\n" * 4)
+
+        self.assertNotIn("install vim [", out)
+        self.assertTrue((self.home / ".vimrc").is_symlink())
+
+    def test_one_target_answer_does_not_leak_into_the_next(self):
+        for name in (".tmux.conf", ".vimrc", ".bashrc"):
+            (self.home / name).write_text(f"# my {name}\n", encoding="utf-8")
+
+        # yes to tmux, no to vim, yes to bash, yes to ai
+        self.run_install_on_a_terminal(answer="y\nn\ny\ny\n" + "\n" * 6)
+
+        self.assertTrue((self.home / ".tmux.conf").is_symlink())
+        self.assertFalse((self.home / ".vimrc").is_symlink())
+        self.assertTrue((self.home / ".bashrc").is_symlink())
+
+    def test_accepting_a_target_does_not_ask_again_per_file(self):
+        (self.home / ".bashrc").write_text("# my bashrc\n", encoding="utf-8")
+
+        out = self.run_install_on_a_terminal(answer="y\n" * 8)
+
+        # The target question already named this exact file. A second prompt
+        # that always follows the first is one people learn to mash through —
+        # and it shifted every later answer onto the wrong target.
+        self.assertNotIn("replace " + str(self.home / ".bashrc"), out)
+        self.assertTrue((self.home / ".bashrc").is_symlink())
+
+    def test_a_replaced_file_still_reaches_the_backup(self):
+        (self.home / ".bashrc").write_text("# irreplaceable\n", encoding="utf-8")
+
+        self.run_install_on_a_terminal(answer="y\n" * 8)
+
+        saved = [p for p in (self.home / ".dotfiles-backup").rglob(".bashrc")]
+        self.assertTrue(saved, "the replaced bashrc was not backed up")
+        self.assertEqual(saved[0].read_text(encoding="utf-8"), "# irreplaceable\n")
+
+    def test_the_file_list_a_target_announces_is_the_list_it_installs(self):
+        out = self.run_install_on_a_terminal("bash", answer="\n" * 4)
+
+        # Both come from links_for(), so a file added to one is added to the
+        # other. Asserting it here is what stops that ever being two lists.
+        for name in (".bashrc", ".bash_profile"):
+            self.assertTrue((self.home / name).is_symlink(), f"{name} was not installed")
+
+    def test_a_stored_no_is_honoured_when_nobody_is_there_to_ask(self):
+        vimrc = self.home / ".vimrc"
+        vimrc.write_text('" my own vimrc\n', encoding="utf-8")
+
+        self.run_install_on_a_terminal(answer="n\n" * 8)
+        self.assertIs(airules.Config.load().targets.get("vim"), False)
+
+        # The unattended re-run is the dangerous one: provisioning, a cron, or
+        # anyone piping into this. Forgetting the stored answer there would
+        # install over a file the user has already explicitly refused.
+        self.run_install()
+
+        self.assertFalse(vimrc.is_symlink())
+        self.assertEqual(vimrc.read_text(encoding="utf-8"), '" my own vimrc\n')
+
+    def test_a_stored_yes_still_installs_when_nobody_is_there_to_ask(self):
+        self.run_install_on_a_terminal(answer="y\n" * 8)
+        self.assertIs(airules.Config.load().targets.get("vim"), True)
+
+        (self.home / ".vimrc").unlink()
+        self.run_install()
+
+        # The stored answer has to work both ways, or "remembered" would just
+        # mean "disabled forever"
+        self.assertTrue((self.home / ".vimrc").is_symlink())
+
+    def test_files_we_already_own_are_not_listed_as_replacements(self):
+        self.run_install_on_a_terminal(answer="y\n" * 8)
+        self.assertTrue((self.home / ".bashrc").is_symlink())
+
+        out = self.run_install_on_a_terminal(answer="y\n" * 8)
+
+        # Second run: everything is already our symlink, so nothing is at risk.
+        # Listing them anyway makes the warning fire on every routine re-run,
+        # and a warning that always fires is one nobody reads.
+        self.assertNotIn("replaces these", out)
+
+    def test_a_broken_symlink_of_the_users_is_still_announced(self):
+        vimrc = self.home / ".vimrc"
+        vimrc.symlink_to(self.home / "somewhere-that-does-not-exist")
+
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        # -e is false for a dangling link, so a check on -e alone would miss it.
+        # It is still something of theirs pointing somewhere they chose, and
+        # replacing it unannounced is the same loss as replacing a real file.
+        self.assertIn("~/.vimrc", out)
+        self.assertLess(out.index("~/.vimrc"), out.index("install vim"))
 
     def run_install_on_a_terminal(self, *args, answer="n\n", **overrides):
         """

@@ -85,9 +85,25 @@ for arg in "$@"; do
   esac
 done
 
+# Naming targets on the command line is itself an answer, so the per-target
+# question is skipped: `./install.sh vim` has already said which one you want.
+EXPLICIT_TARGETS=true
+
+# Set per target by want_target when it asked and was told yes. Suppresses the
+# per-file prompt for that target only; a run that names its targets on the
+# command line never sets it, so those files are still confirmed one by one.
+#
+# The reset before each target cannot currently be observed: EXPLICIT_TARGETS is
+# fixed for a whole run, so either every target is asked (and sets this itself)
+# or none is. It stays because that reasoning is about today's control flow, and
+# a target installed without passing through want_target would silently inherit
+# the previous one's consent.
+TARGET_CONFIRMED=false
+
 # Default to all known targets when none are specified.
 if [ ${#TARGETS[@]} -eq 0 ]; then
   TARGETS=(tmux vim bash ai)
+  EXPLICIT_TARGETS=false
 fi
 
 
@@ -159,6 +175,11 @@ confirm_replace() {
   $ASSUME_YES && return 0
   [ -t 0 ] || return 0
 
+  # The per-target question already named this exact file and was answered yes.
+  # Asking again per file is the same consent collected twice, and a second
+  # prompt that always follows the first is one people learn to mash through.
+  $TARGET_CONFIRMED && return 0
+
   printf "  %s?%s replace %s — a copy goes to %s/ [y/N] " \
     "$c_yellow" "$c_reset" "$dst" "$BACKUP_DIR" >&2
   read -r reply || return 1
@@ -167,6 +188,105 @@ confirm_replace() {
     [yY]|[yY][eE][sS]) return 0 ;;
     *)                 return 1 ;;
   esac
+}
+
+
+# ---- would_replace: files a target clobbers that are not ours -
+# Echoes one destination per line: those that exist and are not already the
+# symlink we would create. A path we already own is not a loss, and listing it
+# would pad the warning until nobody reads it.
+#
+# Args: $1 target name.
+# Prints: zero or more paths.
+would_replace() {
+  local src dst
+
+  while IFS='|' read -r src dst <&3; do
+    [ -n "$dst" ] || continue
+    # -e is false for a broken symlink, so -L too: a dangling link is still
+    # something of the user's that we are about to overwrite.
+    if [ -e "$dst" ] || [ -L "$dst" ]; then
+      [ "$(resolve_link "$dst")" = "$src" ] || echo "$dst"
+    fi
+  done 3<<EOF
+$(links_for "$1")
+EOF
+}
+
+
+# ---- resolve_link: where a symlink points, or "" ------------
+# `readlink -f` is GNU-only, so this reads the one hop we care about.
+#
+# Args: $1 a path.
+# Prints: the link target for a symlink, otherwise nothing.
+resolve_link() {
+  [ -L "$1" ] && readlink "$1"
+}
+
+
+# ---- want_target: ask whether to install one target ----------
+# Names the files it would replace first, then asks. Answering no skips the
+# target entirely, so nothing of the user's is touched.
+#
+# Args: $1 target name.
+# Returns: 0 to install, 1 to skip.
+want_target() {
+  local target="$1" default reply clobbers
+
+  default="$(configured_target "$target")"
+
+  # Not a question when there is nobody to answer, when --yes was given, or when
+  # the user named this target on the command line — `./install.sh vim` has
+  # already said which one they want.
+  if $ASSUME_YES || $EXPLICIT_TARGETS || [ ! -t 0 ]; then
+    [ "$default" = "false" ] && return 1
+    return 0
+  fi
+
+  clobbers="$(would_replace "$target")"
+  if [ -n "$clobbers" ]; then
+    printf "\n" >&2
+    warn "installing $target replaces these, and a copy of each goes to $BACKUP_DIR/:"
+    printf "%s\n" "$clobbers" | sed "s|^$HOME|~|; s|^|      |" >&2
+  fi
+
+  if [ "$default" = "false" ]; then
+    printf "  %s?%s install %s [y/N] " "$c_yellow" "$c_reset" "$target" >&2
+    read -r reply || return 1
+    case "$reply" in
+      [yY]|[yY][eE][sS]) TARGET_CONFIRMED=true; return 0 ;;
+      *)                 return 1 ;;
+    esac
+  fi
+
+  printf "  %s?%s install %s [Y/n] " "$c_yellow" "$c_reset" "$target" >&2
+  read -r reply || { TARGET_CONFIRMED=true; return 0; }
+  case "$reply" in
+    [nN]|[nN][oO]) return 1 ;;
+    *)             TARGET_CONFIRMED=true; return 0 ;;
+  esac
+}
+
+
+# ---- configured_target / remember_target ---------------------
+# The answers live in the same machine-local JSON config the AI tools use, so a
+# re-run pre-fills with what was chosen last time rather than asking cold. Read
+# and written through airules, which owns that file's shape; nothing here parses
+# JSON in bash.
+#
+# Args: $1 target name (and $2 "true"/"false" for remember_target).
+# Prints: configured_target echoes "true", "false", or "" when never answered.
+configured_target() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import airules
+answered = airules.Config.load().targets.get(sys.argv[2])
+print("" if answered is None else str(answered).lower())' "$DOTFILES_DIR/ai/lib" "$1" 2>/dev/null || echo ""
+}
+
+remember_target() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import airules
+config = airules.Config.load()
+config.targets[sys.argv[2]] = sys.argv[3] == "true"
+config.save()' "$DOTFILES_DIR/ai/lib" "$1" "$2" 2>/dev/null || true
 }
 
 
@@ -217,11 +337,60 @@ link() {
 # To add a new tool: write install_<tool>(), add a case to the
 # dispatcher, and add it to the default TARGETS list above.
 
+# ---- links_for: the src|dst pairs one target installs ---------
+# Echoes one "source|destination" per line. Every target's file list lives here
+# and nowhere else, so the installer and the announcement that says what will be
+# replaced cannot drift apart — a list that only the installer knew would let
+# the warning quietly stop naming a file it still clobbers.
+#
+# Args: $1 target name.
+# Prints: zero or more "src|dst" lines. Nothing for an unknown target.
+links_for() {
+  case "$1" in
+    tmux)
+      echo "$DOTFILES_DIR/tmux/tmux.conf|$HOME/.tmux.conf"
+      echo "$DOTFILES_DIR/tmux/scripts/dev-layout.sh|$HOME/.tmux/scripts/dev-layout.sh"
+      echo "$DOTFILES_DIR/tmux/scripts/clip.sh|$HOME/.tmux/scripts/clip.sh"
+      ;;
+    vim)
+      echo "$DOTFILES_DIR/vim/vimrc|$HOME/.vimrc"
+      ;;
+    bash)
+      echo "$DOTFILES_DIR/bash/bashrc|$HOME/.bashrc"
+      echo "$DOTFILES_DIR/bash/bash_profile|$HOME/.bash_profile"
+      ;;
+    ai)
+      echo "$DOTFILES_DIR/ai/bin/ai-rules|$HOME/.local/bin/ai-rules"
+      echo "$DOTFILES_DIR/ai/bin/ai-setup|$HOME/.local/bin/ai-setup"
+      echo "$DOTFILES_DIR/ai/bin/daily-notes-sync|$HOME/.local/bin/daily-notes-sync"
+      ;;
+  esac
+}
+
+
+# ---- link_all: install every file a target owns --------------
+# Args: $1 target name.
+link_all() {
+  local src dst
+
+  # The list is read on fd 3, not through a pipe. A pipeline would run this loop
+  # in a subshell with stdin bound to the pipe, so confirm_replace's `[ -t 0 ]`
+  # would see "not a terminal" and auto-approve every replacement without ever
+  # asking — silently clobbering files the prompt exists to protect.
+  #
+  # IFS split on | rather than word-splitting, so a path containing a space
+  # stays one argument.
+  while IFS='|' read -r src dst <&3; do
+    [ -n "$src" ] && link "$src" "$dst"
+  done 3<<EOF
+$(links_for "$1")
+EOF
+}
+
+
 install_tmux() {
   info "Installing tmux config"
-  link "$DOTFILES_DIR/tmux/tmux.conf"             "$HOME/.tmux.conf"
-  link "$DOTFILES_DIR/tmux/scripts/dev-layout.sh" "$HOME/.tmux/scripts/dev-layout.sh"
-  link "$DOTFILES_DIR/tmux/scripts/clip.sh"       "$HOME/.tmux/scripts/clip.sh"
+  link_all tmux
 
   # TPM (tmux plugin manager) lives at ~/.tmux/plugins/tpm.
   if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
@@ -238,20 +407,17 @@ install_tmux() {
 
 install_vim() {
   info "Installing vim config"
-  link "$DOTFILES_DIR/vim/vimrc" "$HOME/.vimrc"
+  link_all vim
 }
 
 install_bash() {
   info "Installing bash config"
-  link "$DOTFILES_DIR/bash/bashrc"       "$HOME/.bashrc"
-  link "$DOTFILES_DIR/bash/bash_profile" "$HOME/.bash_profile"
+  link_all bash
 }
 
 install_ai() {
   info "Installing AI rules + tooling"
-  link "$DOTFILES_DIR/ai/bin/ai-rules" "$HOME/.local/bin/ai-rules"
-  link "$DOTFILES_DIR/ai/bin/ai-setup" "$HOME/.local/bin/ai-setup"
-  link "$DOTFILES_DIR/ai/bin/daily-notes-sync" "$HOME/.local/bin/daily-notes-sync"
+  link_all ai
 
   if $DRY_RUN; then
     warn "would run ai-setup (prompts for local-rules remote, agents, rule modules, notes path and remote)"
@@ -286,11 +452,27 @@ echo
 # ---- Dispatcher ---------------------------------------------
 for target in "${TARGETS[@]}"; do
   case "$target" in
+    tmux|vim|bash|ai) ;;
+    *) err "unknown target: $target"; err "known: tmux vim bash ai"; exit 1 ;;
+  esac
+
+  # Asked before anything is touched, and after being told exactly which of your
+  # files it would replace. A dry run reports rather than asks — it changes
+  # nothing, so there is nothing to consent to.
+  TARGET_CONFIRMED=false
+  if ! $DRY_RUN && ! want_target "$target"; then
+    warn "skipping $target"
+    remember_target "$target" false
+    continue
+  fi
+
+  $DRY_RUN || remember_target "$target" true
+
+  case "$target" in
     tmux)  install_tmux ;;
     vim)   install_vim ;;
     bash)  install_bash ;;
     ai)    install_ai ;;
-    *)     err "unknown target: $target"; err "known: tmux vim bash ai"; exit 1 ;;
   esac
 done
 
