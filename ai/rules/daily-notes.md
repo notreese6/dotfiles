@@ -44,7 +44,27 @@ After finishing a **substantial task** — a feature/fix that lands, a non-trivi
 
 **Markdown safety:** in note content, wrap any path, template, or placeholder that contains angle brackets in backticks (e.g. `<date>`, `<project>`, or a whole template like `daily-notes/<date>/<project>.md`). A raw `<word>` is parsed as an HTML tag by the renderer and silently breaks the line.
 
-When daily-notes sync is enabled: before editing a note, run `daily-notes-sync pull`; if it reports an incoming change to the file you are about to touch, re-read and reconcile rather than overwrite. After logging, run `daily-notes-sync` to commit and push. If it reports a conflict, stop and ask.
+**Syncing across machines — `daily-notes-sync`.** These notes are shared between several machines, so a note written here can be stale before it is saved. Two commands, in this order:
+
+1. **Before editing any note, run `daily-notes-sync pull`.** It reports what changed on the other machines and commits nothing, so it is safe to run at any point. If it names the file you are about to write, **re-read that file and reconcile** — do not overwrite it with what you had in mind before you knew.
+2. **After logging, run `daily-notes-sync`.** It pulls, commits everything, and pushes.
+
+What its output means:
+
+| It says | Means |
+|---|---|
+| `[*] already current` | nobody else has written since your last sync |
+| `[+] N file(s) changed on the remote` | re-read the listed files before writing them |
+| `[+] pushed` | your notes are on the remote |
+| `[*] nothing to push` | the remote already has everything; nothing was sent |
+| `[-] could not push` | committed locally, delivery pending. **Not a failure** — carry on |
+| `[-] conflicting edits…` | **stop and ask.** See below |
+
+**A conflict means stop and ask.** Two machines edited the same note and the tool will not choose between them, because both sides are prose someone wrote. It aborts cleanly and leaves your working tree exactly as it was — nothing is half-merged and there are no conflict markers in your files. Report which files it named and wait; do not attempt to reconcile them yourself.
+
+**A failed push is not a failure.** The note is committed locally and goes out on the next sync. Do not retry in a loop, and do not treat it as a reason to stop working.
+
+**If it says the directory is not a git repository**, say so and stop. Do not run `git init` — whether these notes become a repository is not an agent's decision.
 
 **Why / how to apply:** this is a *nudge I follow*, not a `settings.json` hook — the summary and the section reconciliation need judgment a deterministic hook can't do, so it's best-effort. If I miss it, say "update daily notes."
 

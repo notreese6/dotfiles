@@ -98,7 +98,8 @@ Nothing has to exist up front — `./install.sh ai` works on a bare machine and 
 |---|---|---|
 | Private local-rules git remote | A repo you can clone over SSH with **at least one `*.md` that is not `README.md`**, and working SSH auth to that host | Leave blank. The shareable modules still apply; drop `*.md` files into `~/.config/ai-notes/local_rules/` by hand instead |
 | Agent targets | Nothing | Defaults to the agents whose directories already exist (`~/.claude`, `~/.codex`), falling back to `claude` |
-| One question per rules module | Nothing | Each module supplies its own default — `daily-notes` yes, `misc` no. Saying yes to `daily-notes` is followed immediately by where notes live; saying yes to `misc` **replaces** what your agent files hold now, so that prompt names each file first. Whatever is there is backed up either way |
+| One question per rules module | Nothing | Each module supplies its own default — `daily-notes` yes, `misc` no. Saying yes to `daily-notes` is followed immediately by where notes live and which remote they sync with; saying yes to `misc` **replaces** what your agent files hold now, so that prompt names each file first. Whatever is there is backed up either way |
+| Daily-notes git remote | A **private** repo you can clone over SSH | Leave blank and notes stay on this machine — everything else still works, nothing syncs |
 
 The private rules remote is only cloned when the local-rules directory is empty, so existing `*.md` files always win over the remote — a clone can never overwrite rules that exist nowhere else. Clear the directory if you want the remote to take over.
 
@@ -171,13 +172,27 @@ The two commands:
 - `ai-setup` — asks where things live (private rules remote, which agents, notes path), writes the answers to `~/.config/ai-notes/config.json`, then runs `ai-rules apply`. Re-running it edits settings: every prompt is pre-filled with what is already configured, so pressing enter keeps it. `--dry-run` reports what it would write and stops. Non-interactive when stdin is not a terminal, which is how `install.sh` drives it.
 - `ai-rules apply` — merges the selected modules and the private layer into **one** file at `~/.config/ai-notes/rules.md` and symlinks each agent's rules path to it, so nothing is duplicated and the agents cannot drift apart.
 
-#### Daily notes — asked about, not built yet
+#### Daily notes
 
-`ai-setup` asks whether to include the daily-notes rules, and the module declares its default as **yes** — including it only appends a section, so it costs you nothing. Answer no and nothing else about notes is asked or recorded.
+A private git repo of dated work notes (`~/daily-notes/<date>/<project>.md`) kept in step across several machines, with the agent pulling before it writes so two machines cannot silently diverge, and stopping to ask on a real conflict rather than picking a winner.
 
-The intent: a private git repo of dated work notes (`~/daily-notes/<date>/<project>.md`) kept in step across several machines, with the agent pulling before it writes so two machines cannot silently diverge, and stopping to ask on a real conflict rather than picking a winner. The `daily-notes.md` module already carries the nudge to keep those notes; on a machine where the module is off it is simply never assembled.
+`ai-setup` asks whether to include the daily-notes rules — the module declares its default as **yes**, since including it only appends a section. Say yes and it also asks where the notes live and which remote they sync with. Say no and nothing else about notes is asked or recorded.
 
-The sync half does not exist yet — there is no `daily-notes-sync` command. Until it lands, yes records a path and includes the rules; the notes themselves are still written by hand or by an agent following them.
+**`daily-notes-sync`** is the third tool, installed alongside the other two:
+
+| Command | Does |
+|---|---|
+| `daily-notes-sync pull` | reports what changed on the other machines and **commits nothing** — the freshness check to run *before* writing a note |
+| `daily-notes-sync` | pull, commit everything, push |
+| `daily-notes-sync sync -m "…"` | same, with your own commit message |
+
+Three things it deliberately will not do:
+
+- **Resolve a conflict.** Both sides are prose someone wrote, so it aborts the rebase, names the files, and exits non-zero. Your working tree is left byte-identical — nothing half-merged, no conflict markers.
+- **Fail because the network did.** A push it cannot deliver leaves the commit local and exits **0**; the note goes out on the next sync. Blocking someone's work over a wifi drop is worse than a stale remote.
+- **Create a repository.** If the notes directory is not a repo, it says so and prints the `git init` line for you to run. Whether a directory of your notes becomes a repository is your decision — `ai-setup` takes the same position, and will clone into an empty directory but never `init` or repoint an existing one.
+
+**The remote must be private.** These are work notes; put them somewhere you would put work.
 
 Anything already at an agent's path that this tool did not put there is moved into a timestamped directory under `~/.dotfiles-backup/` first, and the run prints where. One directory per run, paths mirrored under it as they sit under `$HOME`, so nothing collides and nothing is overwritten. Nothing prunes it, so delete old ones yourself once you are happy.
 

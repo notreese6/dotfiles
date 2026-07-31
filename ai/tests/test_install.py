@@ -44,7 +44,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         self.write_module(self.rules, "daily-notes.md", NOTES_RULES, front="order=20, default=on")
 
         (self.fake_ai / "bin").mkdir()
-        for name in ("ai-rules", "ai-setup"):
+        for name in ("ai-rules", "ai-setup", "daily-notes-sync"):
             (self.fake_ai / "bin" / name).symlink_to(self.repo / "ai" / "bin" / name)
 
     def run_install(self, *args, **extra_env):
@@ -105,10 +105,21 @@ class TestInstallAiTarget(SandboxedTestCase):
         result = self.run_install("ai")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-        for name in ("ai-rules", "ai-setup"):
+        for name in ("ai-rules", "ai-setup", "daily-notes-sync"):
             link = self.bin_dir() / name
             self.assertTrue(link.is_symlink(), f"{name} was not linked")
             self.assertEqual(link.resolve(), (self.repo / "ai" / "bin" / name).resolve())
+
+    def test_the_linked_sync_tool_actually_runs(self):
+        self.assertEqual(self.run_install("ai").returncode, 0)
+
+        # A symlink that exists but points at something unexecutable is a link
+        # in name only, and the failure would not show until someone needed it
+        result = subprocess.run([str(self.bin_dir() / "daily-notes-sync"), "--help"],
+                                capture_output=True, text=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("daily-notes", result.stdout)
 
     def test_install_runs_setup_through_to_assembled_rules(self):
         result = self.run_install("ai")

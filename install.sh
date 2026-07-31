@@ -251,9 +251,10 @@ install_ai() {
   info "Installing AI rules + tooling"
   link "$DOTFILES_DIR/ai/bin/ai-rules" "$HOME/.local/bin/ai-rules"
   link "$DOTFILES_DIR/ai/bin/ai-setup" "$HOME/.local/bin/ai-setup"
+  link "$DOTFILES_DIR/ai/bin/daily-notes-sync" "$HOME/.local/bin/daily-notes-sync"
 
   if $DRY_RUN; then
-    warn "would run ai-setup (prompts for local-rules remote, agents, notes path)"
+    warn "would run ai-setup (prompts for local-rules remote, agents, rule modules, notes path and remote)"
     return 0
   fi
 
