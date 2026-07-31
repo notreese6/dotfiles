@@ -111,9 +111,14 @@ class ConflictError(NotesError):
 
     Attributes:
         paths (list): [str] the conflicted files, repo-relative, sorted.
+        has_stashed_work (bool): True when the conflicting local edits were put
+            on the stash rather than left in the file. That happens when the
+            rebase succeeded and re-applying the autostash is what conflicted —
+            the file is back to the remote's version and the reader's own text
+            is only in the stash, which is not where they will look for it.
     """
 
-    def __init__(self, paths):
+    def __init__(self, paths, has_stashed_work=False):
         """
         Name the conflicted files and say the tree was left alone.
 
@@ -121,6 +126,8 @@ class ConflictError(NotesError):
             paths (iterable of str): repo-relative paths git reported as
                 unmerged. May be empty when git reported a conflict without
                 naming files, which is still a conflict.
+            has_stashed_work (bool): whether the local edits ended up on the
+                stash instead of in the file.
 
         Returns:
             None
@@ -129,11 +136,14 @@ class ConflictError(NotesError):
             None
         """
 
-        self.paths = sorted(paths)
+        self.paths            = sorted(paths)
+        self.has_stashed_work = has_stashed_work
 
         named = ", ".join(self.paths) if self.paths else "an unnamed file"
+        where = ("; your uncommitted edits are on the stash" if has_stashed_work
+                 else "; the rebase was aborted and nothing was changed")
 
-        super().__init__(f"conflict in {named}; the rebase was aborted and nothing was changed")
+        super().__init__(f"conflict in {named}{where}")
 
 
 class RepoState(Enum):
@@ -664,25 +674,63 @@ def pull(notes_dir):
     if not has_upstream(notes_dir):
         return delta
 
-    result = _git(notes_dir, "pull", "--rebase", "--autostash", "--quiet", should_check=False)
-    if result.returncode == 0:
-        return delta
+    stashes_before = _stash_count(notes_dir)
 
-    # Collected before the abort, because aborting clears the unmerged state
-    # that names them.
+    result = _git(notes_dir, "pull", "--rebase", "--autostash", "--quiet", should_check=False)
+
+    # Checked regardless of the exit code. `git pull --rebase --autostash` exits
+    # ZERO when the rebase itself succeeds but re-applying the autostash
+    # conflicts — it prints "Applying autostash resulted in conflicts" and
+    # leaves markers in the working tree. Trusting the status code there let
+    # `git add -A` stage those markers as content and push them to the remote,
+    # while every line of output said the sync had worked.
     paths = conflicted_paths(notes_dir)
 
-    # Unconditional, and its own failure ignored: if the pull failed for a
-    # reason that started no rebase (offline, say), there is nothing to abort
-    # and saying so would bury the real outcome.
+    if result.returncode == 0 and not paths:
+        return delta
+
+    # Only one of these two can be in progress, and each ignores its own failure:
+    # whichever did not happen has nothing to abort, and saying so would bury
+    # the real outcome.
     _git(notes_dir, "rebase", "--abort", should_check=False)
+
+    # An autostash conflict leaves no rebase to abort, so the markers are still
+    # in the tree. They are safe to discard ONLY because the pull put the local
+    # edits in a stash first — checked, not assumed, because resetting without
+    # one would destroy uncommitted work.
+    was_stashed = bool(paths) and _stash_count(notes_dir) > stashes_before
+    if was_stashed:
+        _git(notes_dir, "reset", "--hard", "HEAD", should_check=False)
 
     # A pull can fail without conflicting — no network, a rejected fetch. Those
     # are not this function's problem: the caller works locally and tries later.
     if not paths and "conflict" not in (result.stderr + result.stdout).lower():
         return delta
 
-    raise ConflictError(paths)
+    raise ConflictError(paths, has_stashed_work=was_stashed)
+
+
+def _stash_count(notes_dir):
+    """
+    Count the entries on the stash.
+
+    Used to tell a stash this pull created from one that was already there: the
+    difference is what makes discarding a conflicted working tree safe.
+
+    Args:
+        notes_dir (str or pathlib.Path): the repository.
+
+    Returns:
+        int: how many stash entries exist. 0 when there are none, or when the
+        stash ref does not exist at all.
+
+    Raises:
+        OSError: git is not installed.
+    """
+
+    result = _git(notes_dir, "stash", "list", should_check=False)
+
+    return len([line for line in result.stdout.splitlines() if line.strip()])
 
 
 def commit_all(notes_dir, message):

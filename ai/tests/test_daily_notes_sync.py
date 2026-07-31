@@ -345,6 +345,35 @@ class TestDailyNotesSyncFailures(NotesRepoTestCase):
         self.assertIn("was not changed", result.stderr)
         self.assertEqual(self.tree_state(self.one), before)
 
+    def test_an_autostash_conflict_does_not_push_markers(self):
+        # End to end, the exact failure seen on a real machine: two sessions
+        # minutes apart, sync reported "[+] pushed", and a literal
+        # "<<<<<<< Updated upstream" block reached the remote.
+        self.commit_push(self.two, "2026-01-01/project.md", "# day one\n\ntheirs\n")
+        self.write(self.one, "2026-01-01/project.md", "# day one\n\nmine, still editing\n")
+
+        result = self.run_sync()
+
+        self.assertEqual(result.returncode, airules.ExitStatus.SYNC_CONFLICT)
+        self.assertNotIn("pushed", result.stdout)
+
+        git(self.one, "fetch", "--quiet")
+        on_remote = git(self.one, "show", "origin/main:2026-01-01/project.md")
+        self.assertNotIn("<<<<<<<", on_remote)
+        self.assertNotIn("mine, still editing", on_remote)
+
+    def test_the_conflict_message_says_where_the_stashed_work_went(self):
+        self.commit_push(self.two, "2026-01-01/project.md", "# day one\n\ntheirs\n")
+        self.write(self.one, "2026-01-01/project.md", "# day one\n\nmine, still editing\n")
+
+        err = self.run_sync().stderr
+
+        # The file now holds the remote's version, so "your working tree was not
+        # changed" would be a lie about the file they are about to open — and
+        # nobody looks on the stash unless told to.
+        self.assertIn("stash", err)
+        self.assertNotIn("your working tree was not changed", err)
+
     def test_a_held_lock_exits_with_its_own_status(self):
         lock = self.one / ".git" / "ai-sync.lock"
         lock.mkdir()

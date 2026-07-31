@@ -129,9 +129,19 @@ def report_conflict(exc):
 
     # Said explicitly because the natural fear on seeing "conflict" is that
     # something was already mangled, and the next move depends on it not being.
-    print("[-] the rebase was aborted; your working tree was not changed", file=sys.stderr)
-    print("[-] open the file(s), reconcile both versions by hand, then run this again",
-          file=sys.stderr)
+    if exc.has_stashed_work:
+        # The file now holds the remote's version and their own edits are only
+        # on the stash. Nobody looks there unless told, and "your working tree
+        # was not changed" would be a lie about the file they are about to open.
+        print("[-] the file(s) above now hold the remote's version", file=sys.stderr)
+        print("[-] YOUR uncommitted edits are on the stash, not lost:", file=sys.stderr)
+        print("      git -C <notes> stash show -p    to see them", file=sys.stderr)
+        print("      git -C <notes> stash pop        to put them back and reconcile by hand",
+              file=sys.stderr)
+    else:
+        print("[-] the rebase was aborted; your working tree was not changed", file=sys.stderr)
+        print("[-] open the file(s), reconcile both versions by hand, then run this again",
+              file=sys.stderr)
 
 
 def resolve_notes_dir():

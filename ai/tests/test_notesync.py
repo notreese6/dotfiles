@@ -306,6 +306,75 @@ class TestPull(NotesRepoTestCase):
         self.assertFalse((self.one / ".git" / "rebase-apply").exists())
         git(self.one, "status")
 
+    def test_an_autostash_conflict_is_a_conflict(self):
+        # The path the suite never covered. `git pull --rebase --autostash`
+        # exits ZERO when the rebase succeeds and re-applying the autostash is
+        # what conflicts, so trusting the exit code let `git add -A` stage the
+        # markers as content and push them to the remote — with every line of
+        # output saying the sync had worked. It only appears with two machines
+        # writing close together, which a single-machine rehearsal cannot make.
+        self.commit_push(self.two, "2026-01-01/project.md", "# day one\n\ntheirs\n")
+
+        # Uncommitted, unlike the rebase-conflict test, which commits first
+        self.write(self.one, "2026-01-01/project.md", "# day one\n\nmine, still editing\n")
+
+        with self.assertRaises(notesync.ConflictError) as caught:
+            notesync.pull(self.one)
+
+        self.assertIn("2026-01-01/project.md", caught.exception.paths)
+
+    def test_an_autostash_conflict_leaves_no_markers_in_the_file(self):
+        self.commit_push(self.two, "2026-01-01/project.md", "# day one\n\ntheirs\n")
+        self.write(self.one, "2026-01-01/project.md", "# day one\n\nmine, still editing\n")
+
+        with self.assertRaises(notesync.ConflictError):
+            notesync.pull(self.one)
+
+        text = (self.one / "2026-01-01/project.md").read_text(encoding="utf-8")
+
+        # Markers in a note are worse than a failed sync: they get committed as
+        # content by the next `git add -A` and read as prose by whoever opens it
+        self.assertNotIn("<<<<<<<", text)
+        self.assertNotIn(">>>>>>>", text)
+        self.assertNotIn("=======", text)
+
+    def test_an_autostash_conflict_keeps_the_local_edits_on_the_stash(self):
+        self.commit_push(self.two, "2026-01-01/project.md", "# day one\n\ntheirs\n")
+        self.write(self.one, "2026-01-01/project.md", "# day one\n\nmine, still editing\n")
+
+        with self.assertRaises(notesync.ConflictError) as caught:
+            notesync.pull(self.one)
+
+        # Discarding the conflicted tree is only safe because the pull stashed
+        # the edits first. If that were ever untrue this would be data loss.
+        self.assertTrue(caught.exception.has_stashed_work)
+        self.assertIn("mine, still editing", git(self.one, "stash", "show", "-p", "stash@{0}"))
+
+    def test_a_sync_after_an_autostash_conflict_commits_nothing(self):
+        self.commit_push(self.two, "2026-01-01/project.md", "# day one\n\ntheirs\n")
+        self.write(self.one, "2026-01-01/project.md", "# day one\n\nmine, still editing\n")
+
+        with self.assertRaises(notesync.ConflictError):
+            notesync.pull(self.one)
+
+        # The actual damage: the tree was left conflicted, so the next add -A
+        # staged the markers and pushed them while reporting success
+        self.assertFalse(notesync.commit_all(self.one, "should not happen"))
+        self.assertEqual(git(self.one, "status", "--porcelain").strip(), "")
+
+    def test_a_rebase_conflict_does_not_claim_work_was_stashed(self):
+        self.commit_push(self.two, "2026-01-01/project.md", "# day one\n\ntheirs\n")
+        self.write(self.one, "2026-01-01/project.md", "# day one\n\nmine\n")
+        git(self.one, "add", "-A")
+        git(self.one, "commit", "--quiet", "-m", "mine")
+
+        with self.assertRaises(notesync.ConflictError) as caught:
+            notesync.pull(self.one)
+
+        # Committed work is still in the file, so telling the reader to look on
+        # the stash would send them somewhere empty
+        self.assertFalse(caught.exception.has_stashed_work)
+
     def test_offline_is_not_a_conflict(self):
         git(self.one, "remote", "set-url", "origin", str(self.home / "nowhere.git"))
 
