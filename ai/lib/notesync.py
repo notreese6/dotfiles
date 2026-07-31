@@ -17,6 +17,7 @@ Two rules shape everything below:
 
 import os
 import subprocess
+from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
@@ -514,6 +515,121 @@ def conflicted_paths(notes_dir):
                   should_check=False)
 
     return sorted(line for line in result.stdout.splitlines() if line.strip())
+
+
+@dataclass(frozen=True)
+class SyncStatus:
+    """
+    Everything a caller needs to know about a notes setup, gathered once.
+
+    Frozen because it describes the setup as it was read: nothing acts on this
+    record, so nothing should be able to edit it and hand it on as fact.
+
+    Args:
+        notes_dir (pathlib.Path): the configured notes directory.
+        does_exist (bool): whether that directory is there at all.
+        state (RepoState): how it stands relative to the configured remote.
+        configured_remote (str): the remote the config names, or "".
+        actual_remote (str): the remote the repository names, or "".
+        has_upstream (bool): whether the branch tracks a remote branch.
+        unpushed (int): commits this clone holds that the remote does not, as of
+            the last fetch. 0 when there is no upstream.
+        uncommitted (int): files changed but not committed.
+        last_commit (str): subject and date of the newest commit, or "" when
+            there are none.
+        note_count (int): how many `.md` files are under the directory, so an
+            empty setup is distinguishable from a working one.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    notes_dir:         Path
+    does_exist:        bool
+    state:             RepoState
+    configured_remote: str  = ""
+    actual_remote:     str  = ""
+    has_upstream:      bool = False
+    unpushed:          int  = 0
+    uncommitted:       int  = 0
+    last_commit:       str  = ""
+    note_count:        int  = 0
+
+    @property
+    def is_ready_to_sync(self):
+        """
+        Whether a sync would actually reach a remote.
+
+        Args:
+            None
+
+        Returns:
+            bool: True only when the directory is a repository whose remote
+            matches the config and whose branch has an upstream. Local-only is
+            deliberately not "ready": the notes work, but nothing syncs.
+
+        Raises:
+            None
+        """
+
+        return self.state is RepoState.READY and self.has_upstream
+
+
+def status(notes_dir, remote):
+    """
+    Read the whole notes setup without changing or fetching anything.
+
+    No fetch: a status command that hangs on a slow network is one nobody runs,
+    and the counts being "as of the last fetch" is worth saying rather than
+    worth waiting for.
+
+    Args:
+        notes_dir (str or pathlib.Path or None): the configured directory, or
+            None when nothing is configured.
+        remote (str): the configured remote, or "".
+
+    Returns:
+        SyncStatus: the setup as read.
+
+    Raises:
+        OSError: the directory exists but cannot be listed, or git is missing.
+    """
+
+    if notes_dir is None:
+        return SyncStatus(notes_dir=Path(""), does_exist=False, state=RepoState.ABSENT)
+
+    notes_dir = Path(notes_dir)
+    if not notes_dir.is_dir():
+        return SyncStatus(notes_dir=notes_dir, does_exist=False, state=RepoState.ABSENT,
+                          configured_remote=remote)
+
+    notes = sum(1 for _ in notes_dir.rglob("*.md"))
+    state = notes_repo_state(notes_dir, remote)
+
+    if not is_repo(notes_dir):
+        return SyncStatus(notes_dir=notes_dir, does_exist=True, state=state,
+                          configured_remote=remote, note_count=notes)
+
+    ahead  = _git(notes_dir, "rev-list", "--count", "@{u}..HEAD", should_check=False)
+    dirty  = _git(notes_dir, "status", "--porcelain", should_check=False)
+    latest = _git(notes_dir, "log", "-1", "--format=%ad  %s", "--date=format:%Y-%m-%d %H:%M",
+                  should_check=False)
+
+    return SyncStatus(
+        notes_dir         = notes_dir,
+        does_exist        = True,
+        state             = state,
+        configured_remote = remote,
+        actual_remote     = remote_url(notes_dir),
+        has_upstream      = has_upstream(notes_dir),
+        unpushed          = int(ahead.stdout.strip() or 0) if ahead.returncode == 0 else 0,
+        uncommitted       = len([l for l in dirty.stdout.splitlines() if l.strip()]),
+        last_commit       = latest.stdout.strip() if latest.returncode == 0 else "",
+        note_count        = notes,
+    )
 
 
 def pull(notes_dir):

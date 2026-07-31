@@ -123,9 +123,9 @@ CONFIG_KEY_MODULES_WERE = {
     "universal_enabled": "misc",
 }
 
-# The starting point for a machine with no config file yet. Named because it is
-# also what ai-setup pre-fills its first prompt with.
-DEFAULT_AGENTS = ("claude",)
+# The starting point for a machine with no config file yet: every agent this
+# tool supports. Derived from SUPPORTED_AGENTS by default_agents() rather than
+# listed here, so adding an agent to that table is the whole of adding it.
 
 # The environment variables this module honors, for the same reason: a mistyped
 # name reads as unset rather than as an error.
@@ -853,7 +853,7 @@ class Config:
         # literal. Two copies of a default drift, and a drifted one is invisible:
         # it only shows on a machine with no config file, which is the one case
         # nobody re-tests.
-        defaults = cls(agents=list(DEFAULT_AGENTS))
+        defaults = cls(agents=default_agents())
 
         return cls(
             agents             = _agent_names(data.get(CONFIG_KEY_AGENTS, defaults.agents)),
@@ -1815,6 +1815,28 @@ def known_agent_names():
     """
 
     return sorted(SUPPORTED_AGENTS)
+
+
+def default_agents():
+    """
+    The agents configured when nobody has said otherwise: all of them.
+
+    Writing a rules file for an agent someone does not use costs them a
+    directory and a file that is backed up anyway; leaving one out costs them
+    an agent silently reading no rules, which they only notice by its absence.
+    The second is the worse failure, so the default covers everything.
+
+    Args:
+        None
+
+    Returns:
+        list: [str] every supported agent name, sorted.
+
+    Raises:
+        None
+    """
+
+    return known_agent_names()
 
 
 def configured_agents():

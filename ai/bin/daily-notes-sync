@@ -44,6 +44,12 @@ def build_parser():
     )
     pull.set_defaults(run=run_pull)
 
+    status = commands.add_parser(
+        "status",
+        help="report where the notes live and whether syncing is set up, changing nothing",
+    )
+    status.set_defaults(run=run_status)
+
     sync = commands.add_parser(
         "sync",
         help="pull, commit everything, and push (the default when no command is given)",
@@ -157,6 +163,65 @@ def resolve_notes_dir():
         return (None, airules.ExitStatus.NOT_A_REPO)
 
     return (directory, airules.ExitStatus.OK)
+
+
+def run_status(args):
+    """
+    Report the whole notes setup in one place, without changing anything.
+
+    Exists because the alternative is inferring the setup from whichever error a
+    failed sync happens to produce, which tells you about one problem at a time
+    and tells an agent nothing at all until it has already tried to write.
+
+    Args:
+        args (argparse.Namespace): parsed arguments. Unused; accepted so every
+            subcommand has one signature.
+
+    Returns:
+        airules.ExitStatus: OK always. Nothing here is a failure — an
+        unconfigured or local-only setup is a state to report, not an error, and
+        a status command that exits non-zero cannot be used to check a state.
+
+    Raises:
+        OSError: git is missing, or a path cannot be read.
+        ValueError: the config file is not valid JSON.
+    """
+
+    config = airules.Config.load()
+    state  = notesync.status(config.notes_path, config.notes_remote)
+
+    if config.notes_path is None:
+        print("[-] no notes path configured; run ai-setup", file=sys.stderr)
+        return airules.ExitStatus.OK
+
+    print(f"[*] notes path:   {state.notes_dir}"
+          f"{'' if state.does_exist else '  (does not exist)'}")
+    print(f"[*] notes:        {state.note_count} markdown file(s)")
+    print(f"[*] module:       daily-notes {'on' if config.modules.get(airules.NOTES_MODULE_STEM) else 'OFF'}")
+
+    if not notesync.is_repo(state.notes_dir):
+        print("[*] git:          not a repository, so nothing syncs")
+        print(f"[*] to set up:    git -C {state.notes_dir} init", file=sys.stderr)
+        return airules.ExitStatus.OK
+
+    print(f"[*] remote:       {state.actual_remote or '(none)'}")
+    if state.configured_remote and state.actual_remote != state.configured_remote:
+        print(f"[-] config says:  {state.configured_remote}  (they disagree)", file=sys.stderr)
+
+    # Said to be as of the last fetch, because status deliberately does not make
+    # a network call — a status command that hangs offline is one nobody runs.
+    print(f"[*] unpushed:     {state.unpushed} commit(s), as of the last fetch")
+    print(f"[*] uncommitted:  {state.uncommitted} file(s)")
+    print(f"[*] last note:    {state.last_commit or '(no commits yet)'}")
+
+    if state.is_ready_to_sync:
+        print("[+] ready: notes are written here and sync to the remote")
+    elif not state.configured_remote:
+        print("[*] local only: notes are written and committed here, and go no further")
+    else:
+        print("[-] not syncing: see the lines above", file=sys.stderr)
+
+    return airules.ExitStatus.OK
 
 
 def run_pull(args):

@@ -479,27 +479,6 @@ def ask_rules_mode(config, home):
     config.rules_mode = answer if answer in airules.RULES_MODES else config.rules_mode
 
 
-def detect_agents(home):
-    """
-    Guess which agents are installed, to pre-fill the agents prompt.
-
-    Args:
-        home (pathlib.Path): the user's home directory.
-
-    Returns:
-        str: space-separated agent names whose directories exist, in
-        SUPPORTED_AGENTS order. Falls back to "claude" when none is found, so
-        the prompt always offers something valid.
-
-    Raises:
-        OSError: a candidate directory cannot be inspected.
-    """
-
-    found = [name for name in airules.known_agent_names() if (home / f".{name}").is_dir()]
-
-    return " ".join(found) if found else "claude"
-
-
 def is_tcc_protected(notes_path, home):
     """
     Say whether a path sits somewhere macOS gates behind TCC.
@@ -596,7 +575,7 @@ def gather(base, home):
     warn_if_not_ssh(config.local_rules_remote)
     config.agents = airules.normalize_agent_names(ask(
         f"Agent targets, spaces or commas ({', '.join(airules.known_agent_names())})",
-        " ".join(config.agents) or detect_agents(home),
+        " ".join(config.agents) or " ".join(airules.default_agents()),
         ENV_AGENTS,
     ))
     # After the agents are chosen, because their names decide which files these

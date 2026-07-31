@@ -151,6 +151,136 @@ class TestDailyNotesSyncCli(NotesRepoTestCase):
         self.assertTrue((self.two / "2026-01-09/offline.md").is_file())
 
 
+class TestStatus(NotesRepoTestCase):
+    """
+    Covers the read-only status report.
+    """
+
+    def setUp(self):
+        """
+        Point the sandboxed config at clone 'one'.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            OSError: the sandbox cannot be written.
+        """
+
+        super().setUp()
+
+        self.write_config(notes_path=str(self.one), notes_remote=str(self.origin))
+
+    def run_status(self, **overrides):
+        """
+        Run `daily-notes-sync status` against the sandbox.
+
+        Args:
+            **overrides (str): environment variables for this run.
+
+        Returns:
+            subprocess.CompletedProcess: the finished run.
+
+        Raises:
+            OSError: the script is missing or is not executable.
+        """
+
+        env = dict(os.environ)
+        env.update(overrides)
+
+        return subprocess.run([str(self.repo / "ai" / "bin" / "daily-notes-sync"), "status"],
+                              capture_output=True, text=True, env=env)
+
+    def test_a_working_setup_reports_ready(self):
+        result = self.run_status()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(self.one), result.stdout)
+        self.assertIn("ready", result.stdout)
+
+    def test_it_changes_nothing(self):
+        before = self.tree_state(self.one)
+        head   = git(self.one, "rev-parse", "HEAD").strip()
+
+        self.run_status()
+
+        # A status command that commits, fetches or writes is one you cannot run
+        # to find out what is going on
+        self.assertEqual(self.tree_state(self.one), before)
+        self.assertEqual(git(self.one, "rev-parse", "HEAD").strip(), head)
+
+    def test_status_does_not_fetch(self):
+        before = git(self.one, "rev-parse", "origin/main").strip()
+        self.commit_push(self.two, "2026-01-10/theirs.md", "theirs\n")
+
+        self.run_status()
+
+        # A fetch would move the remote-tracking ref. It is left alone on
+        # purpose: a status command that makes a network call hangs on a slow
+        # or unreachable remote, and one that hangs is one nobody runs — which
+        # is why the report says its counts are as of the last fetch.
+        self.assertEqual(git(self.one, "rev-parse", "origin/main").strip(), before)
+        self.assertIn("as of the last fetch", self.run_status().stdout)
+
+    def test_a_local_only_setup_is_reported_as_working_not_broken(self):
+        git(self.one, "remote", "remove", "origin")
+        self.write_config(notes_remote="")
+
+        result = self.run_status()
+
+        # Local-only is a coherent way to use this. Reporting it as an error is
+        # what makes an agent decide notes are broken and stop logging.
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("local only", result.stdout)
+        self.assertNotIn("not syncing", result.stdout + result.stderr)
+
+    def test_a_directory_that_is_not_a_repo_says_what_to_run(self):
+        plain = self.home / "plain-notes"
+        (plain / "2026-01-01").mkdir(parents=True)
+        (plain / "2026-01-01" / "note.md").write_text("a note\n", encoding="utf-8")
+        self.write_config(notes_path=str(plain))
+
+        result = self.run_status()
+        out    = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("not a repository", out)
+        self.assertIn(f"git -C {plain} init", out)
+
+        # The notes are still counted: "not a repository" and "no notes" are
+        # different problems and only one of them is about git
+        self.assertIn("1 markdown file", out)
+        self.assertFalse((plain / ".git").exists())
+
+    def test_a_mismatched_remote_is_reported_rather_than_hidden(self):
+        git(self.one, "remote", "set-url", "origin", "ssh://git@example.com/me/OTHER.git")
+
+        result = self.run_status()
+        out    = result.stdout + result.stderr
+
+        self.assertIn("OTHER.git", out)
+        self.assertIn("they disagree", out)
+
+    def test_status_exits_zero_even_when_nothing_is_set_up(self):
+        self.write_config(notes_path=None)
+
+        # Non-zero would make this unusable as a check: a caller could not tell
+        # "the setup is incomplete" from "the command itself failed"
+        self.assertEqual(self.run_status().returncode, 0)
+
+    def test_unpushed_work_is_reported(self):
+        self.write(self.one, "2026-01-09/mine.md", "mine\n")
+        git(self.one, "add", "-A")
+        git(self.one, "commit", "--quiet", "-m", "mine")
+
+        out = self.run_status().stdout
+
+        self.assertIn("1 commit(s)", out)
+
+
 class TestDailyNotesSyncFailures(NotesRepoTestCase):
     """
     Covers each way the command declines to act, and what it exits with.

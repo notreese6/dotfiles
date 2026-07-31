@@ -39,7 +39,7 @@ class TestConfig(SandboxedTestCase):
         airules.Config.load().save()
 
         data = json.loads(airules.config_path().read_text(encoding="utf-8"))
-        self.assertEqual(data["agents"], ["claude"])
+        self.assertEqual(data["agents"], airules.known_agent_names())
 
     def test_corrupt_config_raises_rather_than_silently_resetting(self):
         path = airules.config_path()
@@ -98,8 +98,12 @@ class TestConfigRecord(SandboxedTestCase):
     def test_absent_file_loads_usable_defaults(self):
         config = airules.Config.load()
 
-        # A machine with no config yet has to be able to assemble anyway
-        self.assertEqual(config.agents, ["claude"])
+        # A machine with no config yet has to be able to assemble anyway, and
+        # for every agent it supports: writing a rules file for an agent someone
+        # does not use costs a backed-up file, while leaving one out costs them
+        # an agent silently reading no rules at all.
+        self.assertEqual(config.agents, ["claude", "codex", "cursor"])
+        self.assertEqual(config.agents, airules.known_agent_names())
         self.assertIsNone(config.notes_path)
 
         # No answers at all, rather than a set of hard-coded per-module fields:
@@ -228,7 +232,7 @@ class TestConfigRecord(SandboxedTestCase):
         # load() must read its fallbacks off the record's own field defaults
         # rather than repeat them. Two copies of a default only disagree on a
         # machine with no config file — the one case nobody re-tests by hand.
-        declared = airules.Config(agents=list(airules.DEFAULT_AGENTS))
+        declared = airules.Config(agents=airules.default_agents())
         loaded   = airules.Config.load()
 
         for name in ("agents", "modules", "local_rules_remote", "notes_remote", "updated_at"):
