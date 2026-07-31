@@ -549,6 +549,9 @@ class SyncStatus:
             there are none.
         note_count (int): how many `.md` files are under the directory, so an
             empty setup is distinguishable from a working one.
+        branch (str): the checked-out branch, or "" on a detached HEAD. Empty is
+            the interesting case: there is then no branch to push, which no
+            other field in this record would reveal.
 
     Returns:
         None
@@ -567,6 +570,7 @@ class SyncStatus:
     uncommitted:       int  = 0
     last_commit:       str  = ""
     note_count:        int  = 0
+    branch:            str  = ""
 
     @property
     def is_ready_to_sync(self):
@@ -628,6 +632,10 @@ def status(notes_dir, remote):
     latest = _git(notes_dir, "log", "-1", "--format=%ad  %s", "--date=format:%Y-%m-%d %H:%M",
                   should_check=False)
 
+    # Non-zero on a detached HEAD, which is the whole point of asking: there is
+    # then no branch to push and nothing else in this report would say so.
+    head = _git(notes_dir, "symbolic-ref", "--short", "-q", "HEAD", should_check=False)
+
     return SyncStatus(
         notes_dir         = notes_dir,
         does_exist        = True,
@@ -639,6 +647,7 @@ def status(notes_dir, remote):
         uncommitted       = len([l for l in dirty.stdout.splitlines() if l.strip()]),
         last_commit       = latest.stdout.strip() if latest.returncode == 0 else "",
         note_count        = notes,
+        branch            = head.stdout.strip() if head.returncode == 0 else "",
     )
 
 

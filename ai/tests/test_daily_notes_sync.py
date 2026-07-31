@@ -255,6 +255,51 @@ class TestStatus(NotesRepoTestCase):
         self.assertIn("1 markdown file", out)
         self.assertFalse((plain / ".git").exists())
 
+    def test_a_detached_head_is_explained_not_just_detected(self):
+        git(self.one, "checkout", "--detach", "HEAD")
+
+        result = self.run_status()
+        out    = result.stdout + result.stderr
+
+        # The tool knew it could not sync and said only "see the lines above",
+        # while nothing above mentioned HEAD at all.
+        self.assertIn("detached", out)
+        self.assertIn("no branch to push", out)
+        self.assertNotIn("see the lines above", out)
+
+    def test_the_report_names_the_branch(self):
+        result = self.run_status()
+
+        self.assertIn("branch:", result.stdout)
+
+    def test_the_whole_report_is_on_one_stream_and_stays_in_order(self):
+        # Reproduces the real condition: stdout is a pipe, so it block-buffers
+        # while stderr does not. Split across streams, every [-] line overtook
+        # the [*] lines it referred to.
+        git(self.one, "remote", "set-url", "origin", "ssh://git@example.com/me/OTHER.git")
+
+        result = self.run_status()
+
+        self.assertEqual(result.stderr, "")
+        self.assertIn("they disagree", result.stdout)
+        self.assertLess(result.stdout.index("[*] notes path:"),
+                        result.stdout.index("[-]"))
+
+    def test_each_reason_for_not_syncing_is_specific(self):
+        git(self.one, "checkout", "--detach", "HEAD")
+        detached = self.run_status().stdout
+
+        git(self.one, "checkout", "-q", "-")
+        git(self.one, "remote", "set-url", "origin", "ssh://git@example.com/me/OTHER.git")
+        mismatched = self.run_status().stdout
+
+        # Two different causes must not produce the same sentence, or the line
+        # carries no information beyond "something is wrong".
+        self.assertNotEqual(
+            detached.split("[-] not syncing:")[-1],
+            mismatched.split("[-] not syncing:")[-1],
+        )
+
     def test_a_mismatched_remote_is_reported_rather_than_hidden(self):
         git(self.one, "remote", "set-url", "origin", "ssh://git@example.com/me/OTHER.git")
 

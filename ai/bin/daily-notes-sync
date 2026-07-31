@@ -200,8 +200,12 @@ def run_status(args):
     config = airules.Config.load()
     state  = notesync.status(config.notes_path, config.notes_remote)
 
+    # The whole report goes to stdout, deliberately. Splitting it across streams
+    # reorders it: stdout block-buffers when it is not a tty while stderr never
+    # does, so every `[-]` line lands ahead of the `[*]` lines it refers to —
+    # which is exactly how "see the lines above" came to point at lines below.
     if config.notes_path is None:
-        print("[-] no notes path configured; run ai-setup", file=sys.stderr)
+        print("[-] no notes path configured; run ai-setup")
         return airules.ExitStatus.OK
 
     print(f"[*] notes path:   {state.notes_dir}"
@@ -211,12 +215,13 @@ def run_status(args):
 
     if not notesync.is_repo(state.notes_dir):
         print("[*] git:          not a repository, so nothing syncs")
-        print(f"[*] to set up:    git -C {state.notes_dir} init", file=sys.stderr)
+        print(f"[*] to set up:    git -C {state.notes_dir} init")
         return airules.ExitStatus.OK
 
     print(f"[*] remote:       {state.actual_remote or '(none)'}")
+    print(f"[*] branch:       {state.branch or '(detached HEAD)'}")
     if state.configured_remote and state.actual_remote != state.configured_remote:
-        print(f"[-] config says:  {state.configured_remote}  (they disagree)", file=sys.stderr)
+        print(f"[-] config says:  {state.configured_remote}  (they disagree)")
 
     # Said to be as of the last fetch, because status deliberately does not make
     # a network call — a status command that hangs offline is one nobody runs.
@@ -229,9 +234,46 @@ def run_status(args):
     elif not state.configured_remote:
         print("[*] local only: notes are written and committed here, and go no further")
     else:
-        print("[-] not syncing: see the lines above", file=sys.stderr)
+        print(f"[-] not syncing: {not_syncing_reason(state)}")
 
     return airules.ExitStatus.OK
+
+
+def not_syncing_reason(state):
+    """
+    Say in one line why a configured setup would not reach its remote.
+
+    Exists because the old message pointed at "the lines above", which is only
+    useful when a line above actually named the problem. A detached HEAD is
+    detected but produces no other diagnostic, so that case said nothing at all.
+
+    Args:
+        state (notesync.SyncStatus): the setup as read.
+
+    Returns:
+        str: the specific reason, falling back to a pointer at the report above
+        when the state is one this has no better sentence for.
+
+    Raises:
+        None
+    """
+
+    if not state.does_exist:
+        return "the notes directory does not exist"
+
+    if not state.branch:
+        return "HEAD is detached, so there is no branch to push"
+
+    if state.configured_remote and state.actual_remote != state.configured_remote:
+        return "the remote here is not the one the config names"
+
+    if not state.actual_remote:
+        return "this repository has no remote"
+
+    if not state.has_upstream:
+        return f"branch {state.branch!r} has no upstream, so there is nothing to push to"
+
+    return "see the report above"
 
 
 def run_pull(args):
