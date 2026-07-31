@@ -291,6 +291,34 @@ The second line is the failure mode: pulling the text out to `NO_AGENTS = "..."`
 
 **Rust** — no conventions set yet beyond the general rules.
 
+## Saving a memory — decide global first, and default to global
+
+Some agents keep a per-session or per-project memory (Claude Code writes one under `~/.claude/projects/<project>/memory/`). **That memory does not travel.** It is one directory on one machine, so a preference saved there reaches whichever session happens to be running in that project, on that machine, and nothing else. These rules travel: they assemble into every agent's rules file on every machine that runs `ai-rules apply`.
+
+So before saving anything to a memory, ask **"is this only true here?"** If it is not, it belongs in the rules — and most of the time it is not:
+
+| The thing | Where |
+|---|---|
+| How I want work done, anywhere — cadence, style, what to check before committing | `ai/rules/misc.md` |
+| Anything naming an employer, an internal host, a codename | the private layer |
+| A fact about *this repo only* — a path, a quirk, a decision that dies with the project | a memory is fine |
+
+**Never save to a memory because it is the quicker option.** Editing the repo means a commit; a memory is one file write. Taking the shortcut is how a standing instruction ends up applying on one machine while the others carry on doing the thing I asked to stop, with nothing anywhere saying why they differ. That has already happened: a rule about verification cadence lived only in one machine's project memory, and a session elsewhere found out about it by chance, from a daily note that mentioned it in passing.
+
+**If a memory already holds something that should be global, move it** — put it in the right module, run `ai-rules apply`, and delete the memory file and its `MEMORY.md` line. Two copies is worse than either one, because they drift and nothing reconciles them.
+
+## Verification cadence — batch it at the boundaries
+
+Run the full test suite and any mutation sweep **at a commit boundary or before a big feature**, not after every exchange. While iterating, run only the test file covering what changed.
+
+- **Never re-run against a tree that has not changed.** A fast-forward merge produces byte-identical content; verifying the result means checking which files are present, not running the suite again.
+- **Scope a sweep to the affected test file** where that is enough. A sweep is N full suite runs, so scoping it is the difference between seconds and half an hour.
+- **Say when a suite is slow and why**, and offer to make it cheaper, rather than absorbing the cost silently on every run.
+
+**Why:** a conflict-free commit-and-merge once took ten minutes, roughly seven and a half of it two full suite runs where the second tested identical bytes. The sweeps do find real defects and are worth running — just not on every turn.
+
+**How to apply:** during iteration, the one relevant test file. Before committing, the suite once and a sweep once. If most of a suite's time is subprocess spawning, name that as the reason rather than treating it as fixed cost.
+
 ## Commit review gating
 
 Before making any git commit, show me the diff and the proposed commit message, and wait for explicit approval. Even if I have asked you to commit, do not run `git commit` until I review.

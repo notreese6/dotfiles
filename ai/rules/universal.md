@@ -31,6 +31,13 @@ setting and changes nothing. If the natural home for the rule is a module that i
 switched off, say so and offer the choice — turn the module on, or put the rule in the
 private layer instead — rather than writing into a file nothing reads.
 
+**Keep this module short.** It declares `required`, so nobody is asked whether
+they want it — it lands on every machine that installs this, whatever else they
+turned down. That makes it the one place where adding a paragraph is a decision
+made on someone else's behalf. It holds how the rules system works and nothing
+else; an opinion about how to work belongs in `misc.md`, which is asked about and
+off by default.
+
 ## Adding a whole new module
 
 `ai/rules/` is globbed, so **a new file is the entire change** — no constant, no
