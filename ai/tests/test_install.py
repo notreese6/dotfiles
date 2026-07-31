@@ -209,12 +209,12 @@ class TestInstallAiTarget(SandboxedTestCase):
         out = self.run_install_on_a_terminal(answer="n\n" * 8)
 
         for target in ("tmux", "vim", "bash", "ai"):
-            self.assertIn(f"install {target}", out, f"{target} was never asked about")
+            self.assertIn(f"? {target} [", out, f"{target} was never asked about")
 
         # Named before the question, not after the answer. The point is to
         # decide knowing what it costs.
         self.assertIn("~/.vimrc", out)
-        self.assertLess(out.index("~/.vimrc"), out.index("install vim"))
+        self.assertLess(out.index("~/.vimrc"), out.index("? vim ["))
 
     def test_declining_a_target_leaves_its_files_completely_alone(self):
         vimrc = self.home / ".vimrc"
@@ -233,7 +233,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         # A re-run must not quietly re-ask as though the answer were yes: the
         # bracket capital is the only thing telling you what enter will do.
         out = self.run_install_on_a_terminal(answer="\n" * 8)
-        self.assertIn("install vim [y/N]", out)
+        self.assertIn("? vim [y/N]", out)
 
     def test_naming_a_target_skips_the_question_entirely(self):
         # `./install.sh vim` has already said which one you want. Asking again
@@ -241,7 +241,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         # stop reading the ones that matter.
         out = self.run_install_on_a_terminal("vim", answer="\n" * 4)
 
-        self.assertNotIn("install vim [", out)
+        self.assertNotIn("? vim [", out)
         self.assertTrue((self.home / ".vimrc").is_symlink())
 
     def test_one_target_answer_does_not_leak_into_the_next(self):
@@ -330,7 +330,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         # It is still something of theirs pointing somewhere they chose, and
         # replacing it unannounced is the same loss as replacing a real file.
         self.assertIn("~/.vimrc", out)
-        self.assertLess(out.index("~/.vimrc"), out.index("install vim"))
+        self.assertLess(out.index("~/.vimrc"), out.index("? vim ["))
 
     def run_install_on_a_terminal(self, *args, answer="n\n", **overrides):
         """
@@ -428,8 +428,47 @@ class TestInstallAiTarget(SandboxedTestCase):
     def test_plan_names_the_targets_before_doing_anything(self):
         result = self.run_install("vim", "--dry-run")
 
-        self.assertIn("Installing: vim", result.stdout)
+        self.assertIn("Targets: vim", result.stdout)
         self.assertIn("--dry-run", result.stdout)
+
+    def test_the_header_says_whose_config_this_is(self):
+        result = self.run_install("--dry-run")
+
+        # Someone cloning this needs to know before the first prompt that these
+        # are one person's preferences, not a neutral setup script. "Installing
+        # tmux" reads as installing the program; it does neither.
+        self.assertIn("one person's dotfiles", result.stdout)
+        self.assertIn("YOURS", result.stdout)
+
+    def test_the_prompt_says_replace_rather_than_install(self):
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        for target in ("tmux", "vim", "bash"):
+            self.assertIn(f"replace your {target} config with this repo's", out)
+
+        # And the ai target is described for what it is, since it does not
+        # replace a config of yours at all
+        self.assertIn("install the AI rules tooling", out)
+
+    def test_personal_targets_are_off_unless_asked_for(self):
+        out = self.run_install_on_a_terminal(answer="\n" * 8)
+
+        # Enter at every prompt must leave someone else's machine as it was.
+        # These are one person's preferences; the default cannot be to take them.
+        for target in ("tmux", "vim", "bash"):
+            self.assertIn(f"? {target} [y/N]", out)
+        self.assertIn("? ai [Y/n]", out)
+
+    def test_the_tmux_hint_is_not_shown_when_tmux_was_declined(self):
+        out = self.run_install_on_a_terminal(answer="n\n" * 8)
+
+        # A next step for something just declined reads as though it happened
+        self.assertNotIn("prefix + I", out)
+
+    def test_the_tmux_hint_is_shown_when_tmux_was_installed(self):
+        out = self.run_install_on_a_terminal("tmux", answer="\n" * 4)
+
+        self.assertIn("prefix + I", out)
 
     def test_summary_counts_backups_from_both_tools(self):
         (self.home / ".vimrc").write_text("\" my vimrc\n", encoding="utf-8")

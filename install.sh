@@ -100,6 +100,10 @@ EXPLICIT_TARGETS=true
 # the previous one's consent.
 TARGET_CONFIRMED=false
 
+# Set when the tmux target actually runs, so the closing tmux hint is only shown
+# to someone who has a tmux config from here to reload.
+INSTALLED_TMUX=
+
 # Default to all known targets when none are specified.
 if [ ${#TARGETS[@]} -eq 0 ]; then
   TARGETS=(tmux vim bash ai)
@@ -224,6 +228,42 @@ resolve_link() {
 }
 
 
+# ---- describes_target: what a target actually does to you ----
+# "install tmux" is not what any of these do — tmux is already installed or it
+# is not, and nothing here changes that. What they do is put one person's config
+# where yours is. The prompt says so.
+#
+# Args: $1 target name.
+# Prints: a one-line description, or the bare name for an unknown target.
+describes_target() {
+  case "$1" in
+    tmux) echo "replace your tmux config with this repo's" ;;
+    vim)  echo "replace your vim config with this repo's" ;;
+    bash) echo "replace your bash config with this repo's" ;;
+    ai)   echo "install the AI rules tooling (asks separately before touching any rules file)" ;;
+    *)    echo "$1" ;;
+  esac
+}
+
+
+# ---- personal_target: is this one person's config? -----------
+# The three dotfile targets are one person's preferences and are off unless
+# asked for, the same way the misc rules module is: taking them replaces what
+# you already use, and a default that costs the reader something should be the
+# one they have to choose. The ai target only links three commands into
+# ~/.local/bin and asks its own questions before touching a rules file, so it is
+# the one that defaults on.
+#
+# Args: $1 target name.
+# Returns: 0 when it is somebody's personal config, 1 otherwise.
+personal_target() {
+  case "$1" in
+    tmux|vim|bash) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+
+
 # ---- want_target: ask whether to install one target ----------
 # Names the files it would replace first, then asks. Answering no skips the
 # target entirely, so nothing of the user's is touched.
@@ -235,23 +275,39 @@ want_target() {
 
   default="$(configured_target "$target")"
 
-  # Not a question when there is nobody to answer, when --yes was given, or when
-  # the user named this target on the command line — `./install.sh vim` has
-  # already said which one they want.
-  if $ASSUME_YES || $EXPLICIT_TARGETS || [ ! -t 0 ]; then
+  # Never answered before: one person's config is off unless asked for.
+  if [ -z "$default" ] && personal_target "$target"; then
+    default=false
+  fi
+
+  # --yes is consent to everything, and naming a target on the command line is
+  # consent to that one: `./install.sh vim` has already answered this question.
+  # Neither may be overridden by the off-by-default rule, or the only ways to
+  # ask for these on purpose would both silently do nothing.
+  if $ASSUME_YES || $EXPLICIT_TARGETS; then
+    return 0
+  fi
+
+  # Nobody to ask. A stored answer decides; without one, somebody's personal
+  # config is not installed over yours by a run that could not ask — that is
+  # exactly the unattended case where nobody would see it happen.
+  if [ ! -t 0 ]; then
     [ "$default" = "false" ] && return 1
     return 0
   fi
 
   clobbers="$(would_replace "$target")"
+  printf "\n" >&2
   if [ -n "$clobbers" ]; then
-    printf "\n" >&2
-    warn "installing $target replaces these, and a copy of each goes to $BACKUP_DIR/:"
+    warn "$(describes_target "$target") — these are YOURS and get replaced:"
     printf "%s\n" "$clobbers" | sed "s|^$HOME|~|; s|^|      |" >&2
+    echo "      (a copy of each goes to $BACKUP_DIR/)" >&2
+  else
+    info "$(describes_target "$target") — nothing of yours is there to replace"
   fi
 
   if [ "$default" = "false" ]; then
-    printf "  %s?%s install %s [y/N] " "$c_yellow" "$c_reset" "$target" >&2
+    printf "  %s?%s %s [y/N] " "$c_yellow" "$c_reset" "$target" >&2
     read -r reply || return 1
     case "$reply" in
       [yY]|[yY][eE][sS]) TARGET_CONFIRMED=true; return 0 ;;
@@ -259,7 +315,7 @@ want_target() {
     esac
   fi
 
-  printf "  %s?%s install %s [Y/n] " "$c_yellow" "$c_reset" "$target" >&2
+  printf "  %s?%s %s [Y/n] " "$c_yellow" "$c_reset" "$target" >&2
   read -r reply || { TARGET_CONFIRMED=true; return 0; }
   case "$reply" in
     [nN]|[nN][oO]) return 1 ;;
@@ -443,7 +499,10 @@ install_ai() {
 # ---- Announce the plan --------------------------------------
 # Names the targets rather than their files: --dry-run already lists every path
 # exactly, and repeating the list here is a second copy that would drift.
-info "Installing: ${TARGETS[*]}"
+info "Targets: ${TARGETS[*]}"
+echo "  These are one person's dotfiles. tmux, vim and bash put THEIR config where YOURS is,"
+echo "  so they are off unless you say yes. ai installs the tooling and asks again before it"
+echo "  touches any rules file."
 echo "  Pick a subset by naming it (e.g. ./install.sh vim ai), or see every file first with --dry-run."
 $ASSUME_YES && warn "--yes: replacing existing files without asking (originals still go to $BACKUP_DIR/)"
 echo
@@ -469,7 +528,7 @@ for target in "${TARGETS[@]}"; do
   $DRY_RUN || remember_target "$target" true
 
   case "$target" in
-    tmux)  install_tmux ;;
+    tmux)  install_tmux; INSTALLED_TMUX=yes ;;
     vim)   install_vim ;;
     bash)  install_bash ;;
     ai)    install_ai ;;
@@ -496,8 +555,12 @@ else
   else
     info "Done. Nothing of yours was replaced, so no backup was needed."
   fi
-  echo
-  echo "Next steps:"
-  echo "  - Open tmux and press 'prefix + I' to install plugins"
-  echo "  - Reload an existing tmux session with 'prefix + r'"
+  # Only for a target that actually ran. A next step for something the user
+  # just declined reads as though it happened anyway.
+  if [ -n "$INSTALLED_TMUX" ]; then
+    echo
+    echo "Next steps:"
+    echo "  - Open tmux and press 'prefix + I' to install plugins"
+    echo "  - Reload an existing tmux session with 'prefix + r'"
+  fi
 fi

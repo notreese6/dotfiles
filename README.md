@@ -92,19 +92,30 @@ Recommended (used by some configs but not strictly required):
 
 ### What a bare `./install.sh` asks
 
-A bare run installs `tmux vim bash ai`, and **asks about each one first** — naming the exact files it would replace before the question, so you decide knowing what it costs:
+**These are one person's dotfiles.** `tmux`, `vim` and `bash` do not install those programs — they put *this repo's* config where *yours* is. Most people cloning this will not want that, so **they are off unless you say yes**:
 
 ```
-[!] installing bash replaces these, and a copy of each goes to ~/.dotfiles-backup/20260730-183900/:
+[!] replace your bash config with this repo's — these are YOURS and get replaced:
       ~/.bashrc
- ?  install bash [Y/n]
+      (a copy of each goes to ~/.dotfiles-backup/20260730-183900/)
+ ?  bash [y/N]
 ```
+
+Press enter at every prompt and nothing of yours is touched.
+
+| Target | Default | What it actually does |
+|---|---|---|
+| `tmux` | **no** | replaces `~/.tmux.conf` and the two helper scripts |
+| `vim` | **no** | replaces `~/.vimrc` |
+| `bash` | **no** | replaces `~/.bashrc` and `~/.bash_profile` |
+| `ai` | yes | links three commands into `~/.local/bin`; asks again before touching any rules file |
+
+`ai` defaults on because it replaces nothing on its own — it installs the tooling, and every rules file it would write is its own separate question.
 
 - **Answer no and that target is not touched at all** — no links, no backups, nothing.
-- **Your answer is remembered** in `~/.config/ai-notes/config.json`, so a re-run pre-fills it: a declined target comes back as `[y/N]` and stays declined, including on unattended re-runs.
-- **Only files at risk are listed.** Anything already pointing at this repo is not a loss, so it is left out — otherwise the warning would fire on every routine re-run and stop being read.
-- **Naming targets skips the questions.** `./install.sh vim ai` has already said which ones you want; those runs confirm file by file instead.
-- `--yes` answers everything yes, `--dry-run` reports and asks nothing.
+- **Your answer is remembered** in `~/.config/ai-notes/config.json`, so a re-run pre-fills it and a declined target stays declined, including on unattended re-runs.
+- **Only files at risk are listed.** Anything already pointing at this repo is not a loss, so it is left out — otherwise the warning would fire on every routine re-run and stop being read. A dangling symlink *is* listed; it is still yours, pointing where you chose.
+- **`./install.sh vim ai` skips the questions** — naming a target is answering it. So does `--yes`. `--dry-run` reports and asks nothing.
 
 Whatever gets replaced goes to `~/.dotfiles-backup/<timestamp>/` either way.
 
