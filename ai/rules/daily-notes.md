@@ -10,6 +10,25 @@ Take this repo and you inherit the notes discipline on its own: nothing here
 depends on `misc.md`, which is notreese's general opinions and is off unless
 you ask for it.
 
+## Where the notes live — read this before anything else
+
+**The notes directory is a per-machine setting. Read it from the config. Do not
+assume `~/daily-notes`, and do not assume it is under your home directory at
+all** — on at least one machine it is `/disk01/home/reesew/daily-notes`.
+
+```bash
+python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/ai-notes/config.json')))['notes_path'])"
+```
+
+That path is `<notes>` everywhere below. If the file or the key is missing, fall
+back to `~/daily-notes`. **Never go searching for a notes folder** — a machine
+with a configured path elsewhere looks empty, and you will report "no daily notes
+exist" about notes that do. That has already happened once: the config was right,
+the rule said to read it, and the first lookup went to the default anyway.
+
+`daily-notes-sync status` prints the resolved path along with everything else
+about the setup, and changes nothing, if you would rather ask the tool.
+
 ## Reading the notes (answering "where are we on X?")
 
 These notes exist to be read, not only written. When asked what happened on a
@@ -42,19 +61,6 @@ After finishing a **substantial task** — a feature/fix that lands, a non-trivi
 **Log it the moment it lands — same response, no batching.** The instant a piece of substantial work completes (the fix works, the image/commit/MR is pushed, the root cause is nailed, the call is made), write the daily-note entry *in that same turn*, before moving on to the next thing or ending the response. Do NOT save it for "later" or "at the end" — deferring is exactly when it silently drops, because in a long multi-turn task the live work always wins and the log never happens. If one effort lands in pieces across several turns, log each piece as it lands.
 
 **End-of-turn self-check (whenever work landed this turn):** before finishing the response, ask: *did substantial work complete this turn, and is it already in today's `<date>/<project>.md` Accomplishments (with `current/` reconciled)?* If not, add it now — don't end the turn until it's recorded. If the user ever has to ask "did you log that?", that's a miss this check exists to prevent.
-
-**Location — read it from the config, do not assume `~/daily-notes`.** The notes
-directory is a per-machine setting, so it differs between machines and the default
-is only a default:
-
-```bash
-python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/ai-notes/config.json')))['notes_path'])"
-```
-
-Use whatever that prints as `<notes>` below. If the file or the key is missing,
-fall back to `~/daily-notes`. **Never search the home directory for a notes
-folder** — a machine with a configured path elsewhere will look empty, and you
-will report "no daily notes exist" about notes that do.
 
 **Layout:** `<notes>/<YYYY-MM-DD>/<project>.md` (moved out of `~/Documents` on 2026-07-27 — that folder is macOS TCC-protected, which blocks agents/tools that lack a per-app grant, silently so in non-interactive runs) — `<YYYY-MM-DD>` is today's local date (compute it, e.g. `date +%F`); `<project>` is the project being worked on (git repo / working-dir name, e.g. `coverage-automation`). One file per project per day. For work **not tied to a single project** — general tooling, automation, workflow/settings changes, the notes system itself — use `general` as the `<project>` (i.e. `<notes>/<YYYY-MM-DD>/general.md`). That kind of meta-work is an accomplishment in its own right and gets recorded there, not crammed into a project's file.
 
