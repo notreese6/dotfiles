@@ -307,6 +307,27 @@ So before saving anything to a memory, ask **"is this only true here?"** If it i
 
 **If a memory already holds something that should be global, move it** — put it in the right module, run `ai-rules apply`, and delete the memory file and its `MEMORY.md` line. Two copies is worse than either one, because they drift and nothing reconciles them.
 
+## Before adding a rule, find out whether it already exists
+
+The rules are one document by the time an agent reads them, so a second rule on a subject that already has one is not an addition — it is a fork. Two near-identical rules drift, and nothing reconciles them.
+
+**Search first. One command, against the file the agents actually read:**
+
+```bash
+grep -in "<topic>" ~/.config/ai-notes/rules.md
+```
+
+Then:
+
+- **Something related exists → edit it in place.** Sharpen the existing wording rather than adding a second rule beside it. If the new point genuinely does not fit under it, say so and add a sibling deliberately, not by default.
+- **What exists is in the wrong module → move it in the same change.** Do not leave a right-place copy next to a wrong-place one; that is the fork again, with extra steps. Moving means cut, paste into the right module, `ai-rules apply`, and confirm the text is in `~/.config/ai-notes/rules.md` exactly once.
+- **Two rules that contradict each other is a bug, not two opinions.** Resolve it — decide which is right, delete or reword the other, and say which one changed. Leaving both makes every later reader pick one at random.
+- **A private rule that would be true at a different employer belongs in the shareable module.** The private layer extends the general rule and says so ("Extends the shareable … rule"); it does not restate it. Specifics that name an internal system stay private, the principle behind them does not.
+
+**Why:** the point of these modules is that each subject has one home. A rule in the wrong one still reaches an agent, so nothing fails visibly — it just means the next person to change that subject changes one of two copies.
+
+**How to apply:** grep before writing, and when you find the subject already covered, prefer editing over appending. A rules file that grows only by addition stops being read.
+
 ## Verification cadence — batch it at the boundaries
 
 Run the full test suite and any mutation sweep **at a commit boundary or before a big feature**, not after every exchange. While iterating, run only the test file covering what changed.
