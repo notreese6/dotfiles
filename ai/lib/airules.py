@@ -1056,10 +1056,13 @@ def _agent_names(names):
 
     Args:
         names (str or list): the setting as the file stored it. A bare string is
-            one name, or several separated by whitespace.
+            one name, or several separated by whitespace, commas, or both. A
+            list may also hold entries with stray commas, which is what a
+            hand-edited config or a copied prompt hint tends to produce.
 
     Returns:
-        list: [str] the names, in the order given.
+        list: [str] the names, in the order given, with separators and empty
+        entries removed.
 
     Raises:
         BadAgentsError: `names` is not a string or a list, or a list holds a
@@ -1067,9 +1070,13 @@ def _agent_names(names):
             inside it otherwise.
     """
 
-    # A bare string is one agent name, or several separated by whitespace
+    # A bare string is one agent name, or several separated by whitespace,
+    # commas, or both. The prompt's own hint lists the valid names comma-first
+    # ("claude, codex, cursor"), so typing them back that way is the obvious
+    # thing to do — accepting only one of the two spellings turns a correct
+    # answer into three "unknown agent" warnings.
     if isinstance(names, str):
-        return names.split()
+        return normalize_agent_names(names)
 
     # null, a number, or an object here would reach list() and raise a bare
     # TypeError from the middle of the write path; a JSON list is the only other
@@ -1083,7 +1090,28 @@ def _agent_names(names):
         if not isinstance(name, str):
             raise BadAgentsError(name)
 
-    return list(names)
+    # Split each entry too: a list is usually machine-written, but a hand-edited
+    # config often holds ["claude, codex"] as one string.
+    return [name for entry in names for name in normalize_agent_names(entry)]
+
+
+def normalize_agent_names(text):
+    """
+    Split an agent list on commas, whitespace, or any mix of the two.
+
+    Args:
+        text (str): one or more names, e.g. "claude codex", "claude, codex",
+            or "claude,codex".
+
+    Returns:
+        list: [str] the names with separators and empty entries removed. Empty
+        when `text` holds no names at all.
+
+    Raises:
+        None
+    """
+
+    return [name for name in text.replace(",", " ").split() if name]
 
 
 def _line_marker_index(text, marker, start=0, should_use_last=False):

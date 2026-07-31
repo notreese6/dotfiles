@@ -150,6 +150,36 @@ class TestConfigRecord(SandboxedTestCase):
 
         self.assertEqual(extra, {"some_future_key": "kept"})
 
+    def test_agents_may_be_separated_by_spaces_commas_or_both(self):
+        # The prompt's own hint lists the valid names comma-first — "claude,
+        # codex, cursor" — so typing them back that way is the obvious thing to
+        # do. Accepting only one spelling turned a correct answer into three
+        # "unknown agent 'claude,'" warnings and a run that configured nothing.
+        for setting in ("claude codex", "claude, codex", "claude,codex", " claude ,, codex "):
+            with self.subTest(setting=setting):
+                self.write_config(agents=setting)
+                self.assertEqual(airules.Config.load().agents, ["claude", "codex"])
+
+    def test_a_list_entry_holding_several_names_is_split_too(self):
+        # What a hand-edited config tends to look like after someone pastes a
+        # comma-separated answer into the JSON
+        self.write_config(agents=["claude, codex"])
+
+        self.assertEqual(airules.Config.load().agents, ["claude", "codex"])
+
+    def test_a_single_name_still_works_either_shape(self):
+        for setting in ("claude", ["claude"]):
+            with self.subTest(setting=setting):
+                self.write_config(agents=setting)
+                self.assertEqual(airules.Config.load().agents, ["claude"])
+
+    def test_separators_alone_yield_no_agents_rather_than_empty_names(self):
+        self.write_config(agents=" , , ")
+
+        # An empty name would reach the target lookup as "unknown agent ''",
+        # which reads as a bug rather than as an empty answer
+        self.assertEqual(airules.Config.load().agents, [])
+
     def test_flat_module_flags_are_read_under_their_new_home(self):
         # Two generations of config in one: `notes_enabled` and `misc_enabled`
         # were top-level keys before per-module answers moved under `modules`.

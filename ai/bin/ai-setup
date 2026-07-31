@@ -594,11 +594,11 @@ def gather(base, home):
         ENV_LOCAL_RULES_REMOTE,
     )
     warn_if_not_ssh(config.local_rules_remote)
-    config.agents = ask(
-        f"Agent targets, space-separated ({', '.join(airules.known_agent_names())})",
+    config.agents = airules.normalize_agent_names(ask(
+        f"Agent targets, spaces or commas ({', '.join(airules.known_agent_names())})",
         " ".join(config.agents) or detect_agents(home),
         ENV_AGENTS,
-    ).split()
+    ))
     # After the agents are chosen, because their names decide which files these
     # are, and before the module questions, because what the reader keeps is a
     # bigger decision than what goes into what they keep.
