@@ -492,6 +492,192 @@ class TestAiSetup(SandboxedTestCase):
         # warn about it on every single run
         self.assertNotIn("nothing reads", self.run_setup(AI_SETUP_LOCAL_RULES_DIR=None).stderr)
 
+    def notes_tree(self, path):
+        """
+        Capture a directory's full contents, for a did-nothing assertion.
+
+        Args:
+            path (pathlib.Path): the directory. Need not exist.
+
+        Returns:
+            dict: {str: str} every file's path relative to `path`, mapped to
+            its bytes as a hex digest. `.git` is included deliberately: the
+            claim under test is that no repository was created.
+
+        Raises:
+            OSError: a file cannot be read.
+        """
+
+        import hashlib
+
+        if not path.exists():
+            return {}
+
+        return {
+            str(p.relative_to(path)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(path.rglob("*")) if p.is_file()
+        }
+
+    def test_notes_directory_with_content_but_no_repo_is_reported_not_created(self):
+        notes = self.home / "daily-notes"
+        notes.mkdir()
+        (notes / "2026-01-01.md").write_text("a note\n", encoding="utf-8")
+        before = self.notes_tree(notes)
+
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(notes),
+                                AI_SETUP_NOTES_REMOTE="ssh://git@example.com/me/notes.git")
+
+        self.assertIn("is not a git repository", result.stderr)
+        self.assertIn("will make it one", result.stderr)
+
+        # The exact commands, with real paths substituted — a reader should not
+        # have to translate a placeholder to act on this
+        self.assertIn(f"git -C {notes} init", result.stderr)
+        self.assertIn("remote add origin ssh://git@example.com/me/notes.git", result.stderr)
+
+        # The actual claim: nothing was created. Asserting the message alone
+        # would pass even if it had silently run the commands it printed.
+        self.assertEqual(self.notes_tree(notes), before)
+        self.assertFalse((notes / ".git").exists())
+
+    def test_a_notes_repo_with_no_remote_is_reported_not_wired_up(self):
+        notes = self.home / "daily-notes"
+        notes.mkdir()
+        subprocess.run(["git", "init", "--quiet", str(notes)], check=True)
+        before = self.notes_tree(notes)
+
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(notes),
+                                AI_SETUP_NOTES_REMOTE="ssh://git@example.com/me/notes.git")
+
+        self.assertIn("no remote", result.stderr)
+        self.assertIn(f"git -C {notes} remote add origin", result.stderr)
+        self.assertEqual(self.notes_tree(notes), before)
+
+    def test_a_notes_repo_pointing_elsewhere_is_reported_not_repointed(self):
+        notes = self.home / "daily-notes"
+        subprocess.run(["git", "init", "--quiet", str(notes)], check=True)
+        subprocess.run(["git", "-C", str(notes), "remote", "add", "origin",
+                        "ssh://git@example.com/me/OTHER.git"], check=True)
+
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(notes),
+                                AI_SETUP_NOTES_REMOTE="ssh://git@example.com/me/notes.git")
+
+        # Both URLs shown so the reader can see which one is wrong. Repointing
+        # someone's repo is how work gets pushed where it was never meant to go.
+        self.assertIn("OTHER.git", result.stderr)
+        self.assertIn("me/notes.git", result.stderr)
+        self.assertIn("nothing was altered", result.stderr)
+
+        current = subprocess.run(["git", "-C", str(notes), "remote", "get-url", "origin"],
+                                 capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(current, "ssh://git@example.com/me/OTHER.git")
+
+    def test_an_empty_notes_directory_with_a_remote_is_cloned(self):
+        origin = self.home / "notes-origin"
+        origin.mkdir()
+        (origin / "2026-01-01.md").write_text("from the remote\n", encoding="utf-8")
+        self._git_init(origin)
+
+        notes = self.home / "daily-notes"
+
+        self.assertEqual(self.run_setup(AI_SETUP_NOTES_PATH=str(notes),
+                                        AI_SETUP_NOTES_REMOTE=str(origin)).returncode, 0)
+
+        # Fetching a repo the owner already made is not creating one, and it is
+        # the same thing the private-rules layer already does
+        self.assertTrue((notes / ".git").is_dir())
+        self.assertTrue((notes / "2026-01-01.md").is_file())
+
+    def test_an_empty_notes_directory_with_no_remote_says_nothing_will_sync(self):
+        notes = self.home / "daily-notes"
+        notes.mkdir()
+
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(notes), AI_SETUP_NOTES_REMOTE="")
+
+        self.assertIn("nothing will sync", result.stderr)
+        self.assertEqual(self.notes_tree(notes), {})
+
+    def test_a_ready_notes_repo_is_reported_silently(self):
+        origin = self.home / "notes-origin"
+        origin.mkdir()
+        (origin / "2026-01-01.md").write_text("note\n", encoding="utf-8")
+        self._git_init(origin)
+
+        notes = self.home / "daily-notes"
+        subprocess.run(["git", "clone", "--quiet", str(origin), str(notes)], check=True)
+
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(notes), AI_SETUP_NOTES_REMOTE=str(origin))
+
+        # A message on every run for a setup that is already correct is noise,
+        # and noise is how the messages that matter get scrolled past
+        self.assertNotIn("nothing will sync", result.stderr)
+        self.assertNotIn("not a git repository", result.stderr)
+        self.assertNotIn("nothing was altered", result.stderr)
+
+    def test_the_notes_remote_is_recorded_and_asked_after_the_path(self):
+        self.run_setup(AI_SETUP_NOTES_PATH=str(self.home / "n"),
+                       AI_SETUP_NOTES_REMOTE="ssh://git@example.com/me/notes.git")
+
+        self.assertEqual(airules.config_get("notes_remote"), "ssh://git@example.com/me/notes.git")
+
+    def test_no_notes_repo_report_when_the_notes_module_is_off(self):
+        notes = self.home / "daily-notes"
+        notes.mkdir()
+        (notes / "2026-01-01.md").write_text("a note\n", encoding="utf-8")
+
+        # Written into the config directly, and NOT passed as an env answer.
+        # Turning the module off skips the question that would set it, so a
+        # test relying on the prompt would leave notes_path unset — and then
+        # pass whether or not the module check works at all.
+        self.write_config(notes_path=str(notes))
+
+        result = self.run_setup(AI_SETUP_MODULE_DAILY_NOTES="no")
+
+        # Notes are off, so their repository is none of setup's business
+        self.assertNotIn("is not a git repository", result.stderr)
+        self.assertNotIn("nothing will sync", result.stderr)
+
+    def test_an_unreachable_notes_remote_does_not_lose_the_answers(self):
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(self.home / "n"),
+                                AI_SETUP_NOTES_REMOTE="ssh://git@example.invalid/me/notes.git")
+
+        # The answers are work the user just did. A clone that cannot reach its
+        # host must not throw them away and make them retype the lot.
+        self.assertEqual(airules.config_get("notes_remote"),
+                         "ssh://git@example.invalid/me/notes.git")
+        self.assertIn("could not clone", result.stderr)
+
+    def test_an_unreachable_notes_remote_still_installs_the_rules(self):
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(self.home / "n"),
+                                AI_SETUP_NOTES_REMOTE="ssh://git@example.invalid/me/notes.git")
+
+        # The notes layer and the rules layer have nothing to do with each
+        # other. A notes host being down must not leave the agents unconfigured.
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(airules.assembled_path().is_file())
+        self.assertTrue((self.home / ".claude" / "CLAUDE.md").is_symlink())
+
+    def test_an_unreachable_notes_remote_reports_rather_than_tracebacks(self):
+        result = self.run_setup(AI_SETUP_NOTES_PATH=str(self.home / "n"),
+                                AI_SETUP_NOTES_REMOTE="ssh://git@example.invalid/me/notes.git")
+
+        # A traceback tells the reader nothing they can act on and looks like
+        # the tool broke rather than the network
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("notes will not sync", result.stderr)
+
+    def test_a_failed_local_rules_clone_also_keeps_the_answers(self):
+        result = self.run_setup(AI_SETUP_LOCAL_RULES_REMOTE="ssh://git@example.invalid/me/r.git",
+                                AI_SETUP_LOCAL_RULES_DIR=str(self.home / "bare"))
+
+        self.assertEqual(result.returncode, airules.ExitStatus.CLONE_FAILED)
+        self.assertEqual(airules.config_get("local_rules_remote"),
+                         "ssh://git@example.invalid/me/r.git")
+
+        # Pointed at where they were kept, so the reader knows re-running is an
+        # edit rather than starting over
+        self.assertIn(str(airules.config_path()), result.stderr)
+
     def test_does_not_clone_over_existing_local_rules(self):
         origin = self.home / "origin"
         origin.mkdir()

@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import airules
+import notesync
 
 # macOS gates these three folders and iCloud Drive through TCC, independently of
 # Unix permissions, and denies a non-interactive process silently. Notes kept
@@ -23,6 +24,7 @@ ENV_AGENTS             = "AI_SETUP_AGENTS"
 ENV_LOCAL_RULES_DIR    = "AI_SETUP_LOCAL_RULES_DIR"
 ENV_LOCAL_RULES_REMOTE = "AI_SETUP_LOCAL_RULES_REMOTE"
 ENV_NOTES_PATH         = "AI_SETUP_NOTES_PATH"
+ENV_NOTES_REMOTE       = "AI_SETUP_NOTES_REMOTE"
 
 # One per module, built from its stem so a module added to the repo gets a
 # non-interactive override without this file being touched:
@@ -303,6 +305,12 @@ def ask_about_modules(config, base, home):
                 str(config.notes_path or home / NOTES_DIRNAME),
                 ENV_NOTES_PATH,
             ), home)
+            config.notes_remote = ask(
+                "Daily-notes git remote — SSH URL, and private (blank = notes stay on this machine)",
+                config.notes_remote,
+                ENV_NOTES_REMOTE,
+            )
+            warn_if_not_ssh(config.notes_remote)
 
     config.modules = answers
 
@@ -371,6 +379,84 @@ def warn_if_remote_yielded_no_rules(remote, local_dir):
           file=sys.stderr)
     print(f"[-] a repo holding only a README counts as empty here — README.md is skipped "
           f"deliberately. Push at least one other *.md and re-run", file=sys.stderr)
+
+
+def report_notes_repo(config):
+    """
+    Say what the notes directory needs, and do none of it.
+
+    Creating a repository out of someone's notes, or rewriting an existing
+    repository's remote, is their decision — not a side effect of running
+    setup. So every case below either clones into a directory that is empty
+    (which is fetching, not making) or prints the exact command to run.
+
+    Args:
+        config (airules.Config): the saved settings. `notes_path` and
+            `notes_remote` are read; nothing is mutated.
+
+    Returns:
+        bool: True when the notes layer is ready to sync, False when something
+        is still needed — a directory the owner has to turn into a repository,
+        a remote that has to be added, or a clone that could not be reached.
+
+    Raises:
+        OSError: the directory cannot be inspected.
+        subprocess.CalledProcessError: a clone was attempted and failed.
+    """
+
+    notes_dir = config.notes_path
+    remote    = config.notes_remote
+    state     = notesync.notes_repo_state(notes_dir, remote)
+
+    if state is notesync.RepoState.READY:
+        return True
+
+    if state is notesync.RepoState.ABSENT and remote:
+        print(f"[*] cloning {remote} into {notes_dir}")
+        try:
+            subprocess.run(["git", "clone", "--quiet", remote, str(notes_dir)], check=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            # Reported, not raised: an unreachable notes host is a bad afternoon,
+            # not a reason to end the run in a traceback with the rules unwritten.
+            print(f"[-] could not clone {remote}: {exc}", file=sys.stderr)
+            print(f"[-] notes will not sync until that works; everything else is set up",
+                  file=sys.stderr)
+            return False
+
+        return True
+
+    if state is notesync.RepoState.ABSENT:
+        print(f"[-] {notes_dir} is empty and no notes remote is set, so nothing will sync",
+              file=sys.stderr)
+        return False
+
+    if state is notesync.RepoState.NOT_A_REPO:
+        print(f"[-] {notes_dir} holds notes but is not a git repository, and nothing here "
+              f"will make it one", file=sys.stderr)
+        print(f"[-] create it yourself when you are ready:", file=sys.stderr)
+        print(f"      git -C {notes_dir} init", file=sys.stderr)
+        print(f"      git -C {notes_dir} add -A && git -C {notes_dir} commit -m 'existing notes'",
+              file=sys.stderr)
+        if remote:
+            print(f"      git -C {notes_dir} remote add origin {remote}", file=sys.stderr)
+            print(f"      git -C {notes_dir} push -u origin HEAD", file=sys.stderr)
+        return False
+
+    if state is notesync.RepoState.NO_REMOTE:
+        print(f"[-] {notes_dir} is a git repository with no remote, so nothing will sync",
+              file=sys.stderr)
+        print(f"      git -C {notes_dir} remote add origin {remote}", file=sys.stderr)
+        return False
+
+    # REMOTE_DIFFERS. Repointing someone's repository at a different remote is
+    # how work ends up pushed somewhere it was never meant to go, so this shows
+    # both and changes neither.
+    print(f"[-] {notes_dir} points at a different remote than the config:", file=sys.stderr)
+    print(f"      repo says:   {notesync.remote_url(notes_dir)}", file=sys.stderr)
+    print(f"      config says: {remote}", file=sys.stderr)
+    print(f"[-] change whichever is wrong; nothing was altered", file=sys.stderr)
+
+    return False
 
 
 def detect_agents(home):
@@ -624,19 +710,30 @@ def run_setup(should_write):
         print("[*] dry run, nothing was written")
         return airules.ExitStatus.OK
 
+    # Saved before anything that can fail. The answers are work the user just
+    # did; a clone that cannot reach its host must not throw them away and make
+    # them retype the lot. A config naming an unreachable remote is harmless —
+    # the next run pre-fills from it, which is how you correct one.
+    config.save()
+
     if config.local_rules_remote and is_bare(config.local_rules_dir):
         try:
             clone_local_rules(config.local_rules_remote, config.local_rules_dir)
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"[-] could not clone {config.local_rules_remote}: {exc}", file=sys.stderr)
-            print("[-] nothing was written; fix the remote or clear the setting to continue",
-                  file=sys.stderr)
+            print(f"[-] your answers are saved in {airules.config_path()}; fix the remote or "
+                  f"clear the setting and re-run", file=sys.stderr)
             return airules.ExitStatus.CLONE_FAILED
 
     warn_if_remote_yielded_no_rules(config.local_rules_remote, config.local_rules_dir)
     warn_if_local_rules_are_stranded(config.local_rules_dir, base)
 
-    config.save()
+    # After the local-rules clone, so a run that sets both up reports them in
+    # the order it did them, and only when the module that uses notes is on.
+    # Reported, never fatal. The notes layer not being ready is a to-do for the
+    # owner; the rules have nothing to do with it and must still be installed.
+    if config.modules.get(airules.NOTES_MODULE_STEM) and config.notes_path:
+        report_notes_repo(config)
 
     status = apply_rules(base)
     if status != airules.ExitStatus.OK:
