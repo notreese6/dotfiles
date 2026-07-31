@@ -430,6 +430,35 @@ def has_upstream(notes_dir):
     return _git(notes_dir, "rev-parse", "--abbrev-ref", "@{u}", should_check=False).returncode == 0
 
 
+def has_unpushed(notes_dir):
+    """
+    Say whether this clone holds commits the remote does not.
+
+    Args:
+        notes_dir (str or pathlib.Path): the repository.
+
+    Returns:
+        bool: True when there is at least one commit ahead of the upstream.
+        False when it is level, or when there is no upstream to compare with —
+        a branch nobody has pushed has nothing to be ahead *of*.
+
+    Raises:
+        OSError: git is not installed.
+    """
+
+    # Redundant with the returncode check below — with no upstream, `@{u}` does
+    # not resolve and git exits 128, so that check alone would already yield
+    # False. Kept because it states the intent: there is nothing to be ahead of.
+    # Change one and the other still holds; remove both and this returns True on
+    # a repo with no remote, which would make the CLI claim it pushed.
+    if not has_upstream(notes_dir):
+        return False
+
+    result = _git(notes_dir, "rev-list", "--count", "@{u}..HEAD", should_check=False)
+
+    return result.returncode == 0 and result.stdout.strip() not in ("", "0")
+
+
 def incoming_delta(notes_dir):
     """
     Fetch, then report what the remote has that this clone does not.

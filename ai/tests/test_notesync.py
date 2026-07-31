@@ -410,6 +410,47 @@ class TestCommitAndPush(NotesRepoTestCase):
             notesync.push(self.one)
 
 
+class TestHasUnpushed(NotesRepoTestCase):
+    """
+    Covers knowing whether anything is waiting to go out.
+    """
+
+    def test_false_on_a_clone_that_is_level_with_its_remote(self):
+        self.assertFalse(notesync.has_unpushed(self.one))
+
+    def test_true_after_a_local_commit(self):
+        self.write(self.one, "2026-01-07/project.md", "mine\n")
+        notesync.commit_all(self.one, "mine")
+
+        self.assertTrue(notesync.has_unpushed(self.one))
+
+    def test_false_again_once_it_is_pushed(self):
+        self.write(self.one, "2026-01-07/project.md", "mine\n")
+        notesync.commit_all(self.one, "mine")
+        notesync.push(self.one)
+
+        self.assertFalse(notesync.has_unpushed(self.one))
+
+    def test_false_with_no_upstream_to_be_ahead_of(self):
+        solo = self.home / "solo"
+        solo.mkdir()
+        git(solo, "init", "--quiet", "--initial-branch=main")
+        (solo / "note.md").write_text("mine\n", encoding="utf-8")
+        git(solo, "add", "-A")
+        git(solo, "commit", "--quiet", "-m", "first")
+
+        # A branch nobody has pushed has nothing to be ahead *of*; saying True
+        # here would make the CLI claim it pushed a repo with no remote
+        self.assertFalse(notesync.has_unpushed(solo))
+
+    def test_incoming_work_does_not_count_as_unpushed(self):
+        self.commit_push(self.two, "2026-01-08/theirs.md", "theirs\n")
+
+        # Behind is not ahead. Confusing the two makes the CLI push on a run
+        # whose only news was someone else's.
+        self.assertFalse(notesync.has_unpushed(self.one))
+
+
 class TestRepoState(NotesRepoTestCase):
     """
     Covers the pure state check ai-setup reports from.

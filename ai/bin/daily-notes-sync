@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+import argparse
+import datetime
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+import notesync
+
+# What a sync commits under when nobody supplied a message. Minute resolution
+# because a person reading `git log` wants to know roughly when, and several
+# syncs inside one minute are one working moment rather than several.
+COMMIT_STAMP_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser. A bare invocation is
+        valid and means a full sync, because that is the thing this command is
+        for; `pull` is the narrower operation and has to be asked for by name.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="daily-notes-sync",
+        description="Keep the daily-notes directory in step with its remote.",
+    )
+    parser.set_defaults(run=run_sync, message=None)
+
+    commands = parser.add_subparsers(title="commands")
+
+    pull = commands.add_parser(
+        "pull",
+        help="bring in remote work and report what changed, without committing anything",
+    )
+    pull.set_defaults(run=run_pull)
+
+    sync = commands.add_parser(
+        "sync",
+        help="pull, commit everything, and push (the default when no command is given)",
+    )
+    sync.add_argument("--message", "-m", help="commit message; defaults to a timestamp")
+    sync.set_defaults(run=run_sync)
+
+    return parser
+
+
+def notes_dir():
+    """
+    Resolve the notes directory from the machine-local config.
+
+    Args:
+        None
+
+    Returns:
+        pathlib.Path or None: the configured directory, or None when nothing is
+        configured — which is a different situation from a directory that is
+        configured but missing, and is reported differently.
+
+    Raises:
+        ValueError: the config file is not valid JSON.
+    """
+
+    return airules.Config.load().notes_path
+
+
+def report_delta(paths, subjects):
+    """
+    Print what a pull brought in, so a caller can see whether to re-read.
+
+    This is the whole point of the `pull` command: an agent about to write a
+    note needs to know whether that file changed elsewhere first.
+
+    Args:
+        paths (list of str): repo-relative files that differ.
+        subjects (list of str): commit subjects, oldest first.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdout cannot be written.
+    """
+
+    if not paths and not subjects:
+        print("[*] already current, nothing came in")
+        return
+
+    print(f"[+] {len(paths)} file(s) changed on the remote:")
+    for path in paths:
+        print(f"      {path}")
+
+    for subject in subjects:
+        print(f"    · {subject}")
+
+
+def report_conflict(exc):
+    """
+    Print a conflict, and say plainly that nothing was changed.
+
+    Args:
+        exc (notesync.ConflictError): the raised conflict, carrying `.paths`.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    print("[-] conflicting edits to the same note on two machines:", file=sys.stderr)
+    for path in exc.paths:
+        print(f"      {path}", file=sys.stderr)
+
+    # Said explicitly because the natural fear on seeing "conflict" is that
+    # something was already mangled, and the next move depends on it not being.
+    print("[-] the rebase was aborted; your working tree was not changed", file=sys.stderr)
+    print("[-] open the file(s), reconcile both versions by hand, then run this again",
+          file=sys.stderr)
+
+
+def resolve_notes_dir():
+    """
+    Get the notes directory, or explain which way it is unusable.
+
+    Args:
+        None
+
+    Returns:
+        tuple: (pathlib.Path or None, airules.ExitStatus). The path is None
+        exactly when the status is not OK, so a caller checks one thing.
+
+    Raises:
+        OSError: the directory cannot be inspected.
+        ValueError: the config file is not valid JSON.
+    """
+
+    directory = notes_dir()
+
+    if directory is None:
+        print("[-] no notes path configured; run ai-setup", file=sys.stderr)
+        return (None, airules.ExitStatus.NOT_A_REPO)
+
+    if not notesync.is_repo(directory):
+        print(f"[-] {directory} is not a git repository, and this command will not make one",
+              file=sys.stderr)
+        print(f"[-] create it yourself, then re-run: git -C {directory} init", file=sys.stderr)
+        return (None, airules.ExitStatus.NOT_A_REPO)
+
+    return (directory, airules.ExitStatus.OK)
+
+
+def run_pull(args):
+    """
+    Bring in remote work and report it, committing nothing.
+
+    Args:
+        args (argparse.Namespace): parsed arguments. Unused; accepted so every
+            subcommand has one signature.
+
+    Returns:
+        airules.ExitStatus: OK when the pull succeeded, including when there
+        was nothing to bring in; NOT_A_REPO, SYNC_LOCKED or SYNC_CONFLICT
+        otherwise.
+
+    Raises:
+        OSError: git is missing, or the directory cannot be read.
+        ValueError: the config file is not valid JSON.
+    """
+
+    directory, status = resolve_notes_dir()
+    if directory is None:
+        return status
+
+    try:
+        with notesync.lock(directory):
+            report_delta(*notesync.pull(directory))
+    except notesync.LockHeld as exc:
+        print(f"[-] {exc}", file=sys.stderr)
+        return airules.ExitStatus.SYNC_LOCKED
+    except notesync.ConflictError as exc:
+        report_conflict(exc)
+        return airules.ExitStatus.SYNC_CONFLICT
+
+    return airules.ExitStatus.OK
+
+
+def run_sync(args):
+    """
+    Pull, commit everything, and push.
+
+    Args:
+        args (argparse.Namespace): parsed arguments. `.message` is the commit
+            message, or None to use a timestamp.
+
+    Returns:
+        airules.ExitStatus: OK whenever the work is safely committed, including
+        when the push could not go out — a network problem must not read as a
+        failure to record the note. NOT_A_REPO, SYNC_LOCKED or SYNC_CONFLICT
+        when nothing could be done.
+
+    Raises:
+        OSError: git is missing, or the directory cannot be read.
+        ValueError: the config file is not valid JSON.
+        subprocess.CalledProcessError: the commit itself failed.
+    """
+
+    directory, status = resolve_notes_dir()
+    if directory is None:
+        return status
+
+    try:
+        with notesync.lock(directory):
+            return sync_within_lock(directory, args.message)
+    except notesync.LockHeld as exc:
+        print(f"[-] {exc}", file=sys.stderr)
+        return airules.ExitStatus.SYNC_LOCKED
+    except notesync.ConflictError as exc:
+        report_conflict(exc)
+        return airules.ExitStatus.SYNC_CONFLICT
+
+
+def sync_within_lock(directory, message):
+    """
+    Do the pull/commit/push sequence, with the lock already held.
+
+    Split out so run_sync stays a dispatcher and the lock is taken in exactly
+    one place, rather than around each step where a gap could open between them.
+
+    Args:
+        directory (pathlib.Path): the notes repository.
+        message (str or None): commit message, or None for a timestamp.
+
+    Returns:
+        airules.ExitStatus: OK, always — every failure that reaches here is one
+        the caller should not treat as fatal. Anything worse has already raised.
+
+    Raises:
+        notesync.ConflictError: a pull or the push's retry hit a real conflict.
+        subprocess.CalledProcessError: the commit failed.
+        OSError: git is missing.
+    """
+
+    report_delta(*notesync.pull(directory))
+
+    stamp     = datetime_stamp()
+    committed = notesync.commit_all(directory, message or f"notes: {stamp}")
+
+    if not committed:
+        print("[*] nothing to commit, notes already match the last sync")
+
+    # Asked before the push rather than inferred from it: `git push` exits 0
+    # with "Everything up-to-date", so reporting on its status alone would say
+    # "pushed" on a run that sent nothing. A commit made offline earlier is
+    # still waiting, though, so this is not the same question as `committed`.
+    if not committed and not notesync.has_unpushed(directory):
+        print("[*] nothing to push, the remote already has everything")
+        return airules.ExitStatus.OK
+
+    if notesync.push(directory):
+        print("[+] pushed")
+        return airules.ExitStatus.OK
+
+    # Deliberately OK. The note is committed; only its delivery is pending, and
+    # exiting non-zero here would fail an agent's turn over a wifi drop.
+    print("[-] could not push; the commit is safe locally and will go out next sync",
+          file=sys.stderr)
+
+    return airules.ExitStatus.OK
+
+
+def datetime_stamp():
+    """
+    Build the timestamp used in a default commit message.
+
+    Args:
+        None
+
+    Returns:
+        str: local date and time to the minute, e.g. "2026-07-30 15:42".
+
+    Raises:
+        None
+    """
+
+    return datetime.datetime.now().strftime(COMMIT_STAMP_FORMAT)
+
+
+def main():
+    """
+    Parse the command line and run the chosen command.
+
+    Args:
+        None
+
+    Returns:
+        int: the process exit status.
+
+    Raises:
+        OSError: git is missing, or a path cannot be read.
+        ValueError: the config file is not valid JSON.
+    """
+
+    args = build_parser().parse_args()
+
+    return args.run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
