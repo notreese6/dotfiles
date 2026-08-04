@@ -84,6 +84,13 @@ fi
 
 alias tmuxdev='~/.tmux/scripts/dev-layout.sh'
 
+# ssh with the remote clipboard wired up. The remote emits OSC 52 (see
+# tmux/scripts/clip.sh); osc52-shim runs the connection on a pty, catches the
+# sequence, and calls pbcopy HERE. Deliberately not named `ssh` — the shim adds
+# a pty layer, so plain ssh stays available when that gets in the way (scp-ish
+# piping, ProxyCommand debugging, anything that dislikes an extra tty).
+sshc() { osc52-shim ssh "$@"; }
+
 
 # ---- Prompt ------------------------------------------------
 # user@host:cwd (branch)  $   — $ is green on success, red on failure.

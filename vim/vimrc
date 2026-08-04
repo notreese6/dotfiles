@@ -41,6 +41,35 @@ set hidden
 " Backspace can cross autoindent, line breaks, and the start-of-insert mark.
 set backspace=indent,eol,start
 
+" ---- System clipboard ------------------------------------------------------
+" Plain `y` only fills Vim's unnamed register; the system clipboard is the
+" separate `+`/`*` register, which is why `Vy` on its own never reaches other
+" apps. `unnamed` routes every yank and delete through the clipboard too, so
+" `Vy` is pasteable anywhere without reaching for `"+y`.
+"
+" Guarded because a Vim built without +clipboard accepts this option and then
+" ignores it — the yank would look fine and go nowhere.
+"
+" Keyed on SSH rather than has('clipboard') alone, because a remote box can be
+" built WITH +clipboard and still have no display to talk to; `unnamed` would
+" then be a silent no-op that looks exactly like a working yank.
+if empty($SSH_TTY)
+  if has('clipboard')
+    set clipboard=unnamed
+  endif
+
+" Over SSH, hand each yank to clip.sh, which emits an OSC 52 escape sequence.
+" Terminal.app ignores OSC 52, so the LOCAL end must be running bash/osc52-shim
+" (i.e. connect with `sshc host`) — it intercepts the sequence and calls pbcopy
+" on the Mac. Without the shim this is a no-op, which is why clip.sh says so.
+elseif exists('##TextYankPost') && executable(expand('~/.tmux/scripts/clip.sh'))
+  augroup YankToSystemClipboard
+    autocmd!
+    autocmd TextYankPost * call system(expand('~/.tmux/scripts/clip.sh'),
+          \ join(v:event.regcontents, "\n"))
+  augroup END
+endif
+
 " ---- Tab navigation (Vim 'tabs' = tab pages, not buffers) -----------------
 nnoremap tj :tabnext<CR>     " next tab
 nnoremap tk :tabprev<CR>     " prev tab

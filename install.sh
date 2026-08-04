@@ -469,6 +469,7 @@ links_for() {
     bash)
       echo "$DOTFILES_DIR/bash/bashrc|$HOME/.bashrc"
       echo "$DOTFILES_DIR/bash/bash_profile|$HOME/.bash_profile"
+      echo "$DOTFILES_DIR/bash/osc52-shim|$HOME/.local/bin/osc52-shim"
       ;;
     ai)
       echo "$DOTFILES_DIR/ai/bin/ai-rules|$HOME/.local/bin/ai-rules"

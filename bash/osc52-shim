@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+"""
+Run a command in a pty and turn its OSC 52 sequences into local clipboard writes.
+
+Terminal.app never implemented OSC 52, so a remote program that emits one gets
+silently ignored. This sits in the middle: it runs the command (normally `ssh`)
+on a pty, watches the output stream for the sequence, and hands the decoded
+payload to pbcopy on THIS machine. Everything else passes through untouched.
+
+    osc52-shim ssh reesew-01
+
+The remote end needs no cooperation beyond emitting the sequence, which is what
+tmux/scripts/clip.sh already does when it detects SSH.
+"""
+
+import argparse
+import base64
+import errno
+import fcntl
+import os
+import pty
+import select
+import signal
+import struct
+import subprocess
+import sys
+import termios
+import tty
+
+# ESC ] 52 ; <targets> ; <base64> <terminator>. Targets is usually "c" for
+# clipboard, but "p" (primary) and combinations are legal, so accept any run of
+# selection characters rather than hardcoding "c".
+OSC52_START = b"\033]52;"
+
+# A sequence ends at BEL or at ST (ESC backslash). Both are in active use — xterm
+# emits BEL, and anything following ECMA-48 strictly emits ST.
+BEL = b"\007"
+ST  = b"\033\\"
+
+# A stray "ESC ] 52 ;" with no terminator would otherwise buffer forever and
+# stall the stream. Real clipboard payloads are far below this.
+MAX_PAYLOAD = 4 * 1024 * 1024
+
+CLIPBOARD_COMMANDS = (
+    ["pbcopy"],
+    ["wl-copy"],
+    ["xclip", "-selection", "clipboard", "-in"],
+    ["xsel", "--clipboard", "--input"],
+)
+
+
+class Osc52Filter:
+    """
+    Split a byte stream into passthrough output and decoded clipboard payloads.
+
+    Kept separate from the pty plumbing so it can be tested directly: a sequence
+    routinely arrives split across reads, which is exactly the case that a naive
+    "search each chunk" implementation gets wrong and a test can pin down.
+    """
+
+    def __init__(self):
+        """
+        Start with an empty carry buffer.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            None
+        """
+
+        self.buffer = b""
+
+    def feed(self, chunk):
+        """
+        Consume a chunk of output and separate clipboard sequences from the rest.
+
+        Args:
+            chunk (bytes): raw bytes just read from the child's pty.
+
+        Returns:
+            tuple[bytes, list[bytes]]: the bytes to forward to the real terminal,
+            and any fully-decoded clipboard payloads found. Either may be empty.
+            A partial sequence is held back and completed on a later call.
+
+        Raises:
+            None. Undecodable base64 is dropped rather than raised on, since a
+            corrupt clipboard payload must not take down the session carrying it.
+        """
+
+        self.buffer += chunk
+        out, loads = b"", []
+
+        while True:
+            start = self.buffer.find(OSC52_START)
+
+            if start == -1:
+                # Nothing pending. Hold back only a possible partial marker at
+                # the tail, so a sequence straddling two reads still matches.
+                keep = self._partial_marker_len()
+                out += self.buffer[:len(self.buffer) - keep]
+                self.buffer = self.buffer[len(self.buffer) - keep:]
+                return out, loads
+
+            out += self.buffer[:start]
+            self.buffer = self.buffer[start:]
+
+            end, term_len = self._find_terminator()
+            if end == -1:
+                # Incomplete: wait for more bytes, unless it has grown past any
+                # plausible payload, in which case treat it as ordinary output.
+                if len(self.buffer) > MAX_PAYLOAD:
+                    out += self.buffer
+                    self.buffer = b""
+                return out, loads
+
+            body = self.buffer[len(OSC52_START):end]
+            self.buffer = self.buffer[end + term_len:]
+
+            payload = self._decode(body)
+            if payload is not None:
+                loads.append(payload)
+
+    def _find_terminator(self):
+        """
+        Locate the end of the sequence currently at the head of the buffer.
+
+        Args:
+            None
+
+        Returns:
+            tuple[int, int]: index of the terminator and its length, or (-1, 0)
+            when the buffer does not yet hold one.
+
+        Raises:
+            None
+        """
+
+        bel = self.buffer.find(BEL)
+        st  = self.buffer.find(ST)
+
+        # Whichever comes FIRST wins: a BEL inside a base64 payload is impossible,
+        # but an ST after a BEL would otherwise swallow unrelated later output.
+        if bel != -1 and (st == -1 or bel < st):
+            return bel, len(BEL)
+        if st != -1:
+            return st, len(ST)
+
+        return -1, 0
+
+    def _partial_marker_len(self):
+        """
+        Length of a trailing fragment that could still become the start marker.
+
+        Args:
+            None
+
+        Returns:
+            int: how many bytes to carry over to the next chunk. 0 when the tail
+            cannot possibly begin a sequence.
+
+        Raises:
+            None
+        """
+
+        for size in range(min(len(OSC52_START) - 1, len(self.buffer)), 0, -1):
+            if self.buffer.endswith(OSC52_START[:size]):
+                return size
+
+        return 0
+
+    @staticmethod
+    def _decode(body):
+        """
+        Decode the base64 portion of an OSC 52 body.
+
+        Args:
+            body (bytes): everything between the start marker and the terminator,
+                i.e. "<targets>;<base64>".
+
+        Returns:
+            bytes or None: the decoded payload, or None when the body is not a
+            readable clipboard write (a read request, or malformed base64).
+
+        Raises:
+            None
+        """
+
+        _, _, data = body.partition(b";")
+
+        # "?" is a clipboard READ request. Answering it would leak local clipboard
+        # contents to whatever is on the other end of the pipe, so refuse.
+        if not data or data == b"?":
+            return None
+
+        try:
+            return base64.b64decode(data, validate=True)
+        except (ValueError, TypeError):
+            return None
+
+
+def copy_to_clipboard(payload):
+    """
+    Put bytes on this machine's clipboard.
+
+    Args:
+        payload (bytes): the text to copy.
+
+    Returns:
+        bool: True when a clipboard tool accepted it, False when none is present
+        or every one failed.
+
+    Raises:
+        None
+    """
+
+    for command in CLIPBOARD_COMMANDS:
+        try:
+            subprocess.run(command, input=payload, check=True)
+            return True
+        except (OSError, subprocess.CalledProcessError):
+            continue
+
+    return False
+
+
+def set_window_size(fd):
+    """
+    Copy the real terminal's dimensions onto the pty.
+
+    Without this the child believes it is 80x24 forever, so full-screen programs
+    over the connection draw at the wrong size and never react to a resize.
+
+    Args:
+        fd (int): the pty master file descriptor.
+
+    Returns:
+        None
+
+    Raises:
+        None. A missing or non-tty stdin simply leaves the default size.
+    """
+
+    try:
+        size = fcntl.ioctl(sys.stdin.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
+    except OSError:
+        pass
+
+
+def pump(fd, on_payload):
+    """
+    Shuttle bytes between the real terminal and the pty until the child exits.
+
+    Args:
+        fd (int): the pty master file descriptor.
+        on_payload (callable): called with each decoded clipboard payload.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: an unrecoverable read/write failure on the pty.
+    """
+
+    filt  = Osc52Filter()
+    stdin = sys.stdin.fileno()
+    watch = [stdin, fd]
+
+    while True:
+        try:
+            readable, _, _ = select.select(watch, [], [])
+        except OSError as err:
+            # SIGWINCH interrupts select; resize and carry on rather than die.
+            if err.errno == errno.EINTR:
+                continue
+            raise
+
+        if stdin in readable:
+            data = os.read(stdin, 8192)
+            if not data:
+                # Local EOF: stop selecting on a dead stdin but KEEP draining the
+                # child, or everything it has yet to write is lost. Closing the
+                # pty master here would kill the child outright.
+                watch.remove(stdin)
+            else:
+                os.write(fd, data)
+
+        if fd in readable:
+            try:
+                data = os.read(fd, 8192)
+            except OSError:
+                return                     # child exited and the pty went away
+            if not data:
+                return
+
+            passthrough, payloads = filt.feed(data)
+            if passthrough:
+                os.write(sys.stdout.fileno(), passthrough)
+            for payload in payloads:
+                on_payload(payload)
+
+
+def run(command):
+    """
+    Run `command` under a pty with OSC 52 interception.
+
+    Args:
+        command (list of str): the argv to execute, e.g. ["ssh", "host"].
+
+    Returns:
+        int: the child's exit status, or 127 when it could not be started.
+
+    Raises:
+        None
+    """
+
+    pid, fd = pty.fork()
+
+    if pid == 0:
+        try:
+            os.execvp(command[0], command)
+        except OSError as err:
+            print(f"[-] osc52-shim: cannot run {command[0]!r}: {err}", file=sys.stderr)
+            os._exit(127)
+
+    set_window_size(fd)
+    signal.signal(signal.SIGWINCH, lambda *_: set_window_size(fd))
+
+    is_tty = sys.stdin.isatty()
+    saved  = termios.tcgetattr(sys.stdin) if is_tty else None
+
+    # Raw mode so keystrokes reach the child untouched — otherwise the local
+    # terminal would line-buffer and echo, and interactive programs would break.
+    if is_tty:
+        tty.setraw(sys.stdin.fileno())
+
+    try:
+        pump(fd, lambda payload: copy_to_clipboard(payload))
+    finally:
+        # Restoring must happen whatever went wrong, or the shell is left in raw
+        # mode with no echo and the user has to blindly type `reset`.
+        if saved is not None:
+            termios.tcsetattr(sys.stdin, termios.TCSAFLUSH, saved)
+
+    _, status = os.waitpid(pid, 0)
+
+    return os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") \
+        else (status >> 8)
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="osc52-shim",
+        description="Run a command in a pty, turning its OSC 52 sequences into local clipboard writes. "
+                    "Exists because Terminal.app does not implement OSC 52 itself.",
+    )
+    parser.add_argument("command", nargs=argparse.REMAINDER,
+                        help="the command to run, e.g. ssh myhost")
+
+    return parser
+
+
+def main():
+    """
+    Run the osc52-shim command line.
+
+    Args:
+        None
+
+    Returns:
+        int: process exit status.
+
+    Raises:
+        SystemExit: the arguments are invalid or --help was requested.
+    """
+
+    args = build_parser().parse_args()
+
+    if not args.command:
+        print("[-] osc52-shim: no command given (try: osc52-shim ssh myhost)", file=sys.stderr)
+        return 2
+
+    return run(args.command)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
