@@ -7,7 +7,7 @@ silently ignored. This sits in the middle: it runs the command (normally `ssh`)
 on a pty, watches the output stream for the sequence, and hands the decoded
 payload to pbcopy on THIS machine. Everything else passes through untouched.
 
-    osc52-shim ssh reesew-01
+    osc52-shim ssh remote-host
 
 The remote end needs no cooperation beyond emitting the sequence, which is what
 tmux/scripts/clip.sh already does when it detects SSH.

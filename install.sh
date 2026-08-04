@@ -475,6 +475,7 @@ links_for() {
       echo "$DOTFILES_DIR/ai/bin/ai-rules|$HOME/.local/bin/ai-rules"
       echo "$DOTFILES_DIR/ai/bin/ai-setup|$HOME/.local/bin/ai-setup"
       echo "$DOTFILES_DIR/ai/bin/daily-notes-sync|$HOME/.local/bin/daily-notes-sync"
+      echo "$DOTFILES_DIR/ai/bin/autorun-mode|$HOME/.local/bin/autorun-mode"
       ;;
   esac
 }
@@ -594,6 +595,42 @@ if ! $EXPLICIT_TARGETS; then
   esac
 fi
 $ASSUME_YES && warn "--yes: replacing existing files without asking (originals still go to $BACKUP_DIR/)"
+echo
+
+
+# ---- Machine role -------------------------------------------
+# Which kind of machine is this? The answer is owned by `autorun-mode`, not by
+# this installer — it has to be changeable later, from any box, without
+# re-running an install. All this does is ask once at setup time and hand the
+# answer over, so a fresh machine still gets the question without anyone having
+# to know the command exists.
+#
+# Setting NV_MACHINE_ROLE answers it non-interactively, for provisioning.
+
+AUTORUN_CMD="$DOTFILES_DIR/ai/bin/autorun-mode"
+ROLE_WANTED="${NV_MACHINE_ROLE:-}"
+
+if [ -z "$ROLE_WANTED" ] && ! $DRY_RUN && ! $ASSUME_YES; then
+  echo
+  info "Machine role: is this an AUTORUN box?"
+  echo "  An AUTORUN box runs agents unattended, with an isolated agent config,"
+  echo "  a sandbox confining them to one writable tree, and every note tagged"
+  echo "  ${c_red}[AUTORUN]${c_reset}. Say no for an ordinary workstation or dev box."
+  echo "  Changeable any time with: autorun-mode on | off | status"
+  printf "  Make this an AUTORUN box? [y/N]: "
+  read -r reply
+  case "$reply" in [Yy]*) ROLE_WANTED="autorun" ;; *) ROLE_WANTED="interactive" ;; esac
+fi
+
+# --yes must not be able to hand a machine the unattended role by accident;
+# that always has to be said out loud.
+if $DRY_RUN; then
+  info "would leave machine role to autorun-mode (currently: $("$AUTORUN_CMD" status >/dev/null 2>&1 && echo autorun || echo interactive))"
+elif [ "$ROLE_WANTED" = "autorun" ]; then
+  "$AUTORUN_CMD" on
+elif [ "$ROLE_WANTED" = "interactive" ]; then
+  "$AUTORUN_CMD" off >/dev/null 2>&1 && ok "machine role: interactive"
+fi
 echo
 
 

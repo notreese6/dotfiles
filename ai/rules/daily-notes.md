@@ -14,7 +14,7 @@ you ask for it.
 
 **The notes directory is a per-machine setting. Read it from the config. Do not
 assume `~/daily-notes`, and do not assume it is under your home directory at
-all** — on at least one machine it is `/disk01/home/reesew/daily-notes`.
+all** — on at least one machine it is `/weird/path/home/<user>/daily-notes`.
 
 ```bash
 python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.config/ai-notes/config.json')))['notes_path'])"

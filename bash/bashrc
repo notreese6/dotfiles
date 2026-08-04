@@ -70,6 +70,21 @@ export SHELL="${BASH:-/bin/bash}"
 export PATH
 
 
+# ---- Machine role ------------------------------------------
+# Is this an ordinary interactive box or a designated AUTORUN box?
+# The answer sets CLAUDE_CONFIG_DIR, P4CLIENT, and the prompt badge.
+# Written by `install.sh` and stored on local disk, so it does not
+# follow the shared NFS home to other machines.
+
+for __role_src in "${DOTFILES_DIR:-}/bash/machine-role.sh" \
+                  ~/Cloned/dotfiles/bash/machine-role.sh; do
+  if [ -z "${NV_MACHINE_ROLE:-}" ] && [ -f "$__role_src" ]; then
+    source "$__role_src"
+  fi
+done
+unset __role_src
+
+
 # ---- ls colors (cross-platform) ----------------------------
 # GNU ls (Linux) reads --color; BSD ls (macOS) reads CLICOLOR.
 
@@ -114,14 +129,22 @@ __make_prompt() {
     color='\[\e[0;31m\]'   # red
   fi
 
-  PS1="\u@\h:\w${branch} ${color}\$\[\e[0m\] "
+  # On an AUTORUN box this is a red [AUTORUN] tag; everywhere else it is empty,
+  # so the prompt is unchanged on an ordinary machine.
+  PS1="${NV_ROLE_BADGE:-}\u@\h:\w${branch} ${color}\$\[\e[0m\] "
 }
 PROMPT_COMMAND='__make_prompt'
 
 
 # ---- Local overrides ---------------------------------------
-# Per-machine config (work tokens, machine-specific paths, etc.)
-# lives here and stays out of the public dotfiles repo. The
-# repo's .gitignore already excludes *.local files.
+# Private config (work tokens, machine-specific paths, etc.) lives
+# here and stays out of the public dotfiles repo. The repo's
+# .gitignore already excludes *.local files.
+#
+# NOT per-machine where $HOME is a shared network volume: ~ is one
+# NFS mount on every NVIDIA dev box, so this file is visible to all
+# of them. Anything that must differ per machine belongs in
+# bash/machine-role.sh or under ~/.local/state, both of which sit on
+# local disk.
 
 [ -f ~/.bashrc.local ] && source ~/.bashrc.local

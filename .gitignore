@@ -3,6 +3,10 @@
 .AppleDouble
 .LSOverride
 
+# Python bytecode, from running the ai/ test suite in place.
+__pycache__/
+*.py[cod]
+
 # Editor / swap / backup files
 *.swp
 *.swo

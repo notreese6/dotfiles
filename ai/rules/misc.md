@@ -392,6 +392,46 @@ This applies to every commit, even if I authorized commits at the start of the w
 
 **How to apply:** Treat "commit this" or "let's commit" as authorization to *prepare* a commit. Show the staged diff and proposed message, then wait. If I approve, commit. If I ask for changes, adjust and re-show. If I am clearly mid-flow and would obviously want a single commit at the end (e.g. you finished a multi-step refactor I scoped), still pause for review at the commit boundary.
 
+## Scan for leaks before committing to a public repository
+
+Anything pushed to a repository the public can read is permanent in practice. A
+history rewrite breaks every clone, and the orphaned commits stay reachable by
+SHA on most forges — and in every fork — long after the branch stops pointing at
+them. So the check belongs *before* the commit, not after the discovery.
+
+**Run the leak scanner against the staged changes before every commit to a
+public repo.** It is installed as a `pre-commit` hook, so in practice this is
+automatic; the rule exists for the cases where it is not — a fresh clone, a new
+machine, or a repo where the hook was never installed. Extends the commit review
+gating above: the scan happens at step 2, before you show me the diff.
+
+What counts as a leak is broader than credentials:
+
+| Kind | Examples |
+|---|---|
+| Secrets | keys, tokens, certificates, credentials in a URL |
+| Identity | usernames, real names, email addresses and their domains |
+| Infrastructure | internal hostnames, private addresses, employer domains |
+| Layout | absolute paths through a home directory, site-specific mount roots |
+
+**The scanner's own pattern list is itself sensitive** — a curated inventory of
+everything being hidden is worse than any single stray mention. So the
+identifying half lives outside every repository and is generated per machine;
+only shape-based secret patterns are ever checked in. Never paste raw scanner
+output anywhere less private than the machine it ran on, and never commit a
+pattern file.
+
+**Why:** identifying detail rarely arrives in a commit that looks like it is
+about identity. It rides along in a path used as an example, a hostname in a
+usage line, a default in a config snippet — none of which read as sensitive
+while you are writing them. A mechanical check catches what review does not,
+because it is not relying on anyone noticing.
+
+**How to apply:** on a new machine or a fresh clone of anything public, install
+the hook before the first commit. If the scanner is unavailable, say so and
+scan by hand rather than committing unscanned. Treat a finding as blocking
+unless I say otherwise; `--no-verify` is mine to invoke, not yours.
+
 ## Unauthenticated MCP servers — tell me to re-auth, don't quietly work around it
 
 **Any time a task could be helped by an MCP server that is unauthenticated, disconnected, or missing its
