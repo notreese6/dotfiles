@@ -290,8 +290,34 @@ describes_target() {
     tmux) echo "replace your tmux config with this repo's" ;;
     vim)  echo "replace your vim config with this repo's" ;;
     bash) echo "replace your bash config with this repo's" ;;
-    ai)   echo "install four commands: ai-rules and ai-setup (build the rules your AI agents read), daily-notes-sync (keeps ~/daily-notes in step across machines) and ai-hooks (wires the date and daily-notes hooks into each agent)" ;;
+    ai)   echo "install five commands into ~/.local/bin" ;;
     *)    echo "$1" ;;
+  esac
+}
+
+
+# ---- details_for: the per-item breakdown printed under the summary ----
+# The ai target installs five separate commands, and naming them in one
+# sentence produced a line nobody could read to the end. The summary says how
+# many and where; this says what each one is, one per line.
+#
+# Deliberately says "your daily notes" rather than a path. This prints BEFORE
+# ai-setup has asked where the notes go, and the answer is not ~/daily-notes on
+# every machine — daily-notes-sync status reports the resolved path once there
+# is one.
+#
+# Args: $1 target name.
+# Prints: zero or more detail lines, unindented. Nothing for a target that
+#         needs no breakdown, which is every target but ai.
+details_for() {
+  case "$1" in
+    ai) cat <<'EOF'
+ai-rules, ai-setup  build the rules your AI agents read
+ai-hooks            wire the date and daily-notes hooks into each agent
+daily-notes-sync    keep your daily notes in step across machines
+autorun-mode        mark a machine as running agents unattended
+EOF
+    ;;
   esac
 }
 
@@ -300,9 +326,9 @@ describes_target() {
 # The three dotfile targets are notreese's own preferences and are off unless
 # asked for, the same way the misc rules module is: taking them replaces what
 # you already use, and a default that costs the reader something should be the
-# one they have to choose. The ai target only links three commands into
-# ~/.local/bin and asks its own questions before touching a rules file, so it is
-# the one that defaults on.
+# one they have to choose. The ai target only links commands into ~/.local/bin
+# and asks its own questions before touching a rules file, so it is the one that
+# defaults on.
 #
 # Args: $1 target name.
 # Returns: 0 when it is somebody's personal config, 1 otherwise.
@@ -321,7 +347,7 @@ personal_target() {
 # Args: $1 target name.
 # Returns: 0 to install, 1 to skip.
 want_target() {
-  local target="$1" default reply clobbers
+  local target="$1" default reply clobbers details
 
   default="$(configured_target "$target")"
 
@@ -360,6 +386,11 @@ want_target() {
     # "you have no $target config" would be plainly untrue.
     info "$(describes_target "$target") — nothing of yours would be replaced"
   fi
+
+  # Indented under whichever header branch just printed, so the breakdown reads
+  # as part of that sentence rather than as a second announcement.
+  details="$(details_for "$target")"
+  [ -n "$details" ] && printf "%s\n" "$details" | sed 's|^|      |' >&2
 
   if [ "$default" = "false" ]; then
     printf "  %s?%s %s [y/N] " "$c_yellow" "$c_reset" "$target" >&2

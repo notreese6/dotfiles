@@ -202,7 +202,7 @@ The two commands:
 
 #### Daily notes
 
-A private git repo of dated work notes (`~/daily-notes/<date>/<project>.md`) kept in step across several machines, with the agent pulling before it writes so two machines cannot silently diverge, and stopping to ask on a real conflict rather than picking a winner.
+A private git repo of dated work notes (`<notes>/<date>/<project>.md`, where `<notes>` is the directory you name during setup) kept in step across several machines, with the agent pulling before it writes so two machines cannot silently diverge, and stopping to ask on a real conflict rather than picking a winner.
 
 `ai-setup` asks whether to include the daily-notes rules — the module declares its default as **yes**, since including it only appends a section. Say yes and it also asks where the notes live and which remote they sync with. Say no and nothing else about notes is asked or recorded.
 
