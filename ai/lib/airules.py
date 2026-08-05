@@ -68,6 +68,20 @@ HOOKS_FLAT   = "flat"
 SKILLS_DIRNAME  = "skills"
 SKILL_ENTRY     = "SKILL.md"
 
+# A skill may name the rules module it belongs to, in its own frontmatter:
+#
+#     ---
+#     name: daily-notes
+#     module: daily-notes
+#     ---
+#
+# Saying no to a subject has to mean no to all of it. Before this key the module
+# answer reached only the rules, so declining the daily-notes module still left
+# its skill linked and its hook firing — the answer looked honoured because the
+# rules text really was gone. A skill that names no module is unconditional,
+# which is right for the private layer, since nothing there is asked about.
+SKILL_MODULE_KEY = "module"
+
 # Each module declares its own metadata on line 1, in an HTML comment so that
 # rendered markdown never shows it:
 #
@@ -620,6 +634,10 @@ class ApplyResult:
         skill_conflicts (list): [(str, pathlib.Path)] a shipped name where
             something the tool did not create already occupies it. Left
             untouched; the caller reports them. May be empty.
+        skills_removed (list): [str] shipped skills whose owning module is now
+            off, whose links this run took away. Reported because a skill
+            disappearing is a change the user should see named, not infer from
+            it no longer being listed.
 
     Returns:
         None
@@ -633,6 +651,7 @@ class ApplyResult:
     assembled: Path
     skills:          List[str] = field(default_factory=list)
     skill_conflicts: List[tuple] = field(default_factory=list)
+    skills_removed:  List[str]   = field(default_factory=list)
 
 
 def config_path():
@@ -2408,6 +2427,78 @@ def skill_sources(*parents):
     return [found[name] for name in sorted(found)]
 
 
+def skill_module(directory):
+    """
+    Read the rules module a skill says it belongs to.
+
+    Args:
+        directory (pathlib.Path): the skill directory, holding a SKILL.md.
+
+    Returns:
+        str: the declared module stem, or "" when the skill names none, has no
+        frontmatter, or cannot be read. Empty means unconditional, which is the
+        safe default: a skill nobody loads costs nothing, whereas dropping one
+        over an unreadable line would remove guidance without saying so.
+
+    Raises:
+        None
+    """
+
+    try:
+        text = (directory / SKILL_ENTRY).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+    if not text.startswith("---\n"):
+        return ""
+
+    # Only the frontmatter block, so a `module:` line in the prose below cannot
+    # be read as a declaration.
+    front = text[4:].split("\n---", 1)[0]
+
+    for line in front.splitlines():
+        key, sep, value = line.partition(":")
+
+        if sep and key.strip() == SKILL_MODULE_KEY:
+            return value.strip()
+
+    return ""
+
+
+def selected_skills(sources, discovered, answers):
+    """
+    Drop the skills whose owning module is switched off.
+
+    Args:
+        sources (list): [pathlib.Path] skill directories, from `skill_sources`.
+        discovered (list): [Module] the modules found under `ai/rules/`.
+        answers (dict): {str: bool} the config's stored answer per module stem.
+
+    Returns:
+        list: [pathlib.Path] the subset to link, in the order given. A skill
+        naming no module is kept. A skill naming a module that does not exist is
+        also kept, because a stale name in one file should not silently remove
+        guidance — the rules assembly is where a missing module is a hard error.
+
+    Raises:
+        None
+    """
+
+    by_stem = {module.stem: module for module in discovered}
+    keep    = []
+
+    for source in sources:
+        stem   = skill_module(source)
+        module = by_stem.get(stem)
+
+        if stem and module and not module.is_selected(answers):
+            continue
+
+        keep.append(source)
+
+    return keep
+
+
 def link_skills(agent, roots, sources):
     """
     Point one agent's skills directory at the skills this repo ships.
@@ -2462,6 +2553,57 @@ def link_skills(agent, roots, sources):
         linked.append(source.name)
 
     return linked, conflicts
+
+
+def unlink_skills(agent, roots, dropped):
+    """
+    Remove links to skills this repo ships but no longer delivers.
+
+    Filtering what gets linked is only half of honouring a switched-off module:
+    a link made while the module was on survives, so the skill stays in front of
+    the agent and the answer still looks ignored. The difference is only visible
+    on the second run, which is exactly when nobody is watching.
+
+    Args:
+        agent (SupportedAgent): the agent whose directory to prune.
+        roots (dict): {RulesRoot: pathlib.Path}. Must carry a HOME entry.
+        dropped (list): [pathlib.Path] source directories no longer selected.
+
+    Returns:
+        list: [str] the names removed, sorted. Empty when the agent has no
+        skills support, nothing was dropped, or nothing was there to remove.
+
+    Raises:
+        OSError: a link exists but cannot be removed.
+    """
+
+    destination = agent.skills_path(roots)
+
+    if destination is None or not destination.is_dir():
+        return []
+
+    removed = []
+
+    for source in dropped:
+        target = destination / source.name
+
+        # Only a symlink of ours, identified the same way link_skills does it.
+        # A real directory under that name is the user's own skill that happens
+        # to share the name, and removing it would be destroying their work over
+        # a config answer.
+        if not target.is_symlink():
+            continue
+
+        try:
+            is_ours = target.resolve() == source.resolve()
+        except OSError:
+            continue
+
+        if is_ours:
+            target.unlink()
+            removed.append(source.name)
+
+    return sorted(removed)
 
 
 def apply_rules(base_dir):
@@ -2584,18 +2726,29 @@ def apply_rules(base_dir):
     # After the rules, because a skill is worthless without the rules that say
     # when to reach for it, and because a failure here must not leave an agent
     # with no rules file at all.
-    skills, conflicts = [], []
+    skills, conflicts, removed = [], [], []
     roots             = rules_roots()
 
     # The repo first, so a shared skill wins a name clash with a private one:
     # the shared side is reviewed and travels, and silently shadowing it with
     # something machine-local is the harder problem to notice.
-    sources = skill_sources(base, local_dir)
+    shipped = skill_sources(base, local_dir)
+
+    # A subject's answer governs every mechanism that delivers it, not just the
+    # rules text. Declining daily-notes used to leave its skill linked and its
+    # hook firing, which read as the answer being ignored.
+    sources = selected_skills(shipped, discovered, config.modules)
+    dropped = [s for s in shipped if s not in sources]
 
     for target in resolved.targets:
         agent_skills, agent_conflicts = link_skills(target.agent, roots, sources)
         skills.extend(n for n in agent_skills if n not in skills)
         conflicts.extend(agent_conflicts)
 
+        # Turning a module back off has to undo what turning it on did, or the
+        # switch only works in one direction.
+        removed.extend(n for n in unlink_skills(target.agent, roots, dropped)
+                       if n not in removed)
+
     return ApplyResult(written=written, unknown=resolved.unknown, assembled=assembled,
-                       skills=skills, skill_conflicts=conflicts)
+                       skills=skills, skill_conflicts=conflicts, skills_removed=removed)

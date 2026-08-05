@@ -1,4 +1,4 @@
-<!-- ai-rules: order=20, default=on, prompt="Include the daily-notes rules" -->
+<!-- ai-rules: order=20, default=on, prompt="Include the daily-notes rules, skill and reminder hook" -->
 
 # Daily notes
 

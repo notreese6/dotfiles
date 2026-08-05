@@ -275,5 +275,159 @@ class TestShippedSkillsAreLoadable(unittest.TestCase):
                 self.assertGreater(len(after[1].strip()), 40, "description too thin to match on")
 
 
+class TestSkillsFollowTheirModule(SandboxedTestCase):
+    """
+    Covers a skill being dropped when the module that owns it is switched off.
+    """
+
+    def modules(self):
+        """
+        Build a throwaway ai/rules/ holding one optional module.
+
+        Args:
+            None
+
+        Returns:
+            list: [airules.Module] the discovered modules.
+
+        Raises:
+            OSError: the sandbox cannot be written.
+        """
+
+        rules = self.home / "ai" / "rules"
+        rules.mkdir(parents=True, exist_ok=True)
+        (rules / "notes.md").write_text(
+            "<!-- ai-rules: order=20, default=on -->\n\n# Notes\n", encoding="utf-8")
+
+        return airules.discover_modules(rules)
+
+    def skill(self, name, owner=""):
+        """
+        Create a skill that optionally names an owning module.
+
+        Args:
+            name (str): the skill's directory name.
+            owner (str): the module stem to declare, or "" to declare none.
+
+        Returns:
+            pathlib.Path: the skill directory.
+
+        Raises:
+            OSError: it cannot be written.
+        """
+
+        directory = self.home / "ai" / "skills" / name
+        directory.mkdir(parents=True, exist_ok=True)
+        declared = f"module: {owner}\n" if owner else ""
+        (directory / "SKILL.md").write_text(
+            f"---\nname: {name}\n{declared}description: probe\n---\n", encoding="utf-8")
+
+        return directory
+
+    def test_a_skill_is_dropped_when_its_module_is_switched_off(self):
+        owned  = self.skill("notes-helper", owner="notes")
+        kept   = self.skill("unowned")
+
+        selected = airules.selected_skills([owned, kept], self.modules(), {"notes": False})
+
+        # Saying no to a subject has to mean no to all of it. Before this, the
+        # answer reached only the rules text, so the skill stayed linked and the
+        # decline looked honoured while it was not.
+        self.assertEqual(selected, [kept])
+
+    def test_a_skill_is_kept_when_its_module_is_on(self):
+        owned = self.skill("notes-helper", owner="notes")
+
+        self.assertEqual(airules.selected_skills([owned], self.modules(), {"notes": True}), [owned])
+
+    def test_an_unanswered_module_falls_back_to_its_own_default(self):
+        owned = self.skill("notes-helper", owner="notes")
+
+        # default=on, and a config that has never been asked must not silently
+        # drop a skill the module itself says should be there.
+        self.assertEqual(airules.selected_skills([owned], self.modules(), {}), [owned])
+
+    def test_a_skill_naming_a_module_that_does_not_exist_is_kept(self):
+        stale = self.skill("orphan", owner="no-such-module")
+
+        # Removing guidance over a stale name in one file would be silent. The
+        # assembly is where a missing module is a hard error; this is not.
+        self.assertEqual(airules.selected_skills([stale], self.modules(), {}), [stale])
+
+    def test_the_private_layer_is_unconditional_because_nothing_asks_about_it(self):
+        private = self.skill("local-only")
+
+        self.assertEqual(airules.skill_module(private), "")
+        self.assertEqual(airules.selected_skills([private], self.modules(), {"notes": False}),
+                         [private])
+
+    def test_a_module_line_in_the_prose_is_not_a_declaration(self):
+        directory = self.skill("prosey")
+        (directory / "SKILL.md").write_text(
+            "---\nname: prosey\ndescription: p\n---\n\nmodule: notes\n", encoding="utf-8")
+
+        # Only the frontmatter declares. A skill explaining modules in its body
+        # must not accidentally opt itself out of delivery.
+        self.assertEqual(airules.skill_module(directory), "")
+
+    def test_a_link_is_removed_once_its_module_goes_off(self):
+        owned = self.skill("notes-helper", owner="notes")
+        roots = {airules.RulesRoot.HOME: self.home, airules.RulesRoot.CONFIG_DIR: self.xdg}
+        claude = airules.SUPPORTED_AGENTS["claude"]
+        airules.link_skills(claude, roots, [owned])
+
+        removed = airules.unlink_skills(claude, roots, [owned])
+
+        # Filtering what gets linked is only half of it: a link made while the
+        # module was on survives, so the skill stays in front of the agent and
+        # the answer still looks ignored. Only visible on the second run.
+        self.assertEqual(removed, ["notes-helper"])
+        self.assertFalse((claude.skills_path(roots) / "notes-helper").exists())
+
+    def test_a_real_directory_under_our_name_is_never_removed(self):
+        owned  = self.skill("notes-helper", owner="notes")
+        roots  = {airules.RulesRoot.HOME: self.home, airules.RulesRoot.CONFIG_DIR: self.xdg}
+        claude = airules.SUPPORTED_AGENTS["claude"]
+
+        theirs = claude.skills_path(roots) / "notes-helper"
+        theirs.mkdir(parents=True)
+        (theirs / "SKILL.md").write_text("MINE\n", encoding="utf-8")
+
+        # Their own skill happens to share the name. Deleting it over a config
+        # answer would destroy work this tool never created -- the one thing
+        # that must not follow from turning a module off.
+        self.assertEqual(airules.unlink_skills(claude, roots, [owned]), [])
+        self.assertEqual((theirs / "SKILL.md").read_text(encoding="utf-8"), "MINE\n")
+
+    def test_a_link_pointing_somewhere_else_is_left_alone(self):
+        owned     = self.skill("notes-helper", owner="notes")
+        elsewhere = self.home / "someone-elses" / "notes-helper"
+        elsewhere.mkdir(parents=True)
+
+        roots  = {airules.RulesRoot.HOME: self.home, airules.RulesRoot.CONFIG_DIR: self.xdg}
+        claude = airules.SUPPORTED_AGENTS["claude"]
+        claude.skills_path(roots).mkdir(parents=True, exist_ok=True)
+        (claude.skills_path(roots) / "notes-helper").symlink_to(elsewhere, target_is_directory=True)
+
+        # A symlink is not automatically ours. Same identity check link_skills
+        # makes, so we can only ever take away what we put there.
+        self.assertEqual(airules.unlink_skills(claude, roots, [owned]), [])
+        self.assertTrue((claude.skills_path(roots) / "notes-helper").is_symlink())
+
+    def test_removing_what_was_never_linked_is_not_an_error(self):
+        owned  = self.skill("notes-helper", owner="notes")
+        roots  = {airules.RulesRoot.HOME: self.home, airules.RulesRoot.CONFIG_DIR: self.xdg}
+
+        self.assertEqual(airules.unlink_skills(airules.SUPPORTED_AGENTS["claude"], roots, [owned]), [])
+
+    def test_the_hook_and_the_library_agree_on_the_notes_module_stem(self):
+        text = (REPO_ROOT / "ai" / "hooks" / "notes-reminder").read_text(encoding="utf-8")
+
+        # The hook duplicates the stem rather than importing it, to keep a
+        # 2600-line import off every Stop event. This is what stops the two
+        # drifting, which is the only thing sharing the constant would buy.
+        self.assertIn(f'NOTES_MODULE_STEM = "{airules.NOTES_MODULE_STEM}"', text)
+
+
 if __name__ == "__main__":
     unittest.main()

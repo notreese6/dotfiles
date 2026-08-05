@@ -316,6 +316,14 @@ ai-rules, ai-setup  build the rules your AI agents read
 ai-hooks            wire the date and daily-notes hooks into each agent
 daily-notes-sync    keep your daily notes in step across machines
 autorun-mode        mark a machine as running agents unattended
+
+then asks its own questions and, for each agent you name:
+  - points its rules file at the assembled rules (it asks first, and backs
+    up what was there)
+  - links this repo's skills into its skills directory, skipping any name
+    you already use rather than replacing it
+  - merges two hooks into its settings, leaving every other setting alone
+    and never replacing a hook it did not write
 EOF
     ;;
   esac

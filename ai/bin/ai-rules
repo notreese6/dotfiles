@@ -105,7 +105,7 @@ def report_written(written):
                   "Cursor > Settings > Rules > User Rules")
 
 
-def report_skills(linked, conflicts):
+def report_skills(linked, conflicts, removed=()):
     """
     Say which skills were linked, and which names were already taken.
 
@@ -113,6 +113,8 @@ def report_skills(linked, conflicts):
         linked (list of str): names now pointing at this repo. May be empty.
         conflicts (list): [(str, pathlib.Path)] a shipped name where something
             the tool did not create already sits. May be empty.
+        removed (list of str): shipped skills unlinked because the module that
+            owns them is now off. May be empty.
 
     Returns:
         None
@@ -123,6 +125,12 @@ def report_skills(linked, conflicts):
 
     if linked:
         print(f"[+] linked {len(linked)} skill(s): {', '.join(linked)}")
+
+    # Named rather than left to be noticed. A skill going away is the visible
+    # half of switching a module off, and silence here looks like the answer
+    # was ignored -- which is the bug this whole path exists to fix.
+    if removed:
+        print(f"[*] removed {len(removed)} skill(s) whose module is off: {', '.join(removed)}")
 
     # Reported rather than resolved. Whatever is already there is the user's,
     # and replacing it to install ours is the clobber this tool refuses to do
@@ -227,7 +235,7 @@ def run_apply():
     # rules — each agent path below is only a pointer at it.
     print(f"[+] assembled {result.assembled}")
     report_written(result.written)
-    report_skills(result.skills, result.skill_conflicts)
+    report_skills(result.skills, result.skill_conflicts, result.skills_removed)
 
     return airules.ExitStatus.OK
 

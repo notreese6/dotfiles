@@ -44,6 +44,14 @@ STATE_DIR = Path(
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
 CONFIG_FILE = CONFIG_HOME / "ai-notes" / "config.json"
 
+# Deliberately a literal rather than an import of airules.NOTES_MODULE_STEM.
+# This runs on every Stop event across three agents, and importing a 2600-line
+# module for one string would put that cost on every turn — while a failed
+# import would have to be swallowed anyway, since this hook may never break a
+# turn. A test asserts the two stay equal, so the duplication cannot drift
+# unnoticed, which is the only thing a shared constant would have bought.
+NOTES_MODULE_STEM = "daily-notes"
+
 REMINDER = (
     "Today's daily note has not been written to this session. If substantial "
     "work landed — a fix that works, a commit or MR, a root cause, a decision — "
@@ -74,9 +82,20 @@ def notes_path():
     """
 
     try:
-        configured = json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("notes_path")
+        config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+    # The module answer, not notes_path, is what says whether this machine keeps
+    # notes at all. Turning the module off does not clear notes_path, so reading
+    # the path alone kept this hook nagging about a subject that had just been
+    # declined — the one place the answer was visibly ignored.
+    modules = config.get("modules") or {}
+
+    if modules.get(NOTES_MODULE_STEM) is False:
+        return None
+
+    configured = config.get("notes_path")
 
     return Path(configured) if configured else None
 

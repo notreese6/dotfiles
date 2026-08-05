@@ -135,6 +135,42 @@ class TestNotesReminder(SandboxedTestCase):
         # noticed the config, which is a far worse failure than a missed note.
         self.assertEqual(self.fire(session_id="s1"), {})
 
+    def write_config(self, **extra):
+        """
+        Rewrite the sandboxed config with the notes path plus any extra keys.
+
+        Args:
+            **extra: additional top-level config keys, e.g. `modules`.
+
+        Returns:
+            None
+
+        Raises:
+            OSError: the config cannot be written.
+        """
+
+        (self.xdg / "ai-notes" / "config.json").write_text(
+            json.dumps({"notes_path": str(self.notes), **extra}), encoding="utf-8")
+
+    def test_declining_the_notes_module_stops_the_nagging(self):
+        self.write_config(modules={"daily-notes": False})
+
+        # Turning the module off does not clear notes_path, so reading the path
+        # alone kept this hook asking about a subject that had just been
+        # declined -- the one place the answer was visibly ignored.
+        self.assertEqual(self.fire(session_id="s1"), {})
+
+    def test_the_module_being_on_is_unaffected(self):
+        self.write_config(modules={"daily-notes": True})
+
+        self.assertIn("decision", self.fire(session_id="s1"))
+
+    def test_a_config_with_no_modules_map_still_asks(self):
+        # Predates the modules map, or was written by hand. Absent is not "off",
+        # and treating it as off would silently retire the reminder on every
+        # machine whose config has not been rewritten since.
+        self.assertIn("decision", self.fire(session_id="s1"))
+
     def test_an_empty_payload_still_works(self):
         # Nothing guarantees a payload carries a session id, and falling over on
         # an empty one would take the hook out on whichever agent omits it.

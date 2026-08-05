@@ -1,5 +1,6 @@
 ---
 name: daily-notes
+module: daily-notes
 description: >-
   Use whenever writing, reading, reconciling or syncing the daily notes — logging
   work that just landed, recapping a meeting, updating a project's current/
