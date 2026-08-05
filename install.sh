@@ -608,11 +608,26 @@ echo
 # Detected generically — anything under $HOME pointing outside $HOME at something
 # absent. No dependency on a particular layout or tool.
 
+# Where a symlink points, without requiring the target to exist.
+#
+# Plain readlink only, because the resolving flags are not portable: GNU has -f
+# and -m, BSD (macOS) has neither in the form needed, and -f additionally fails
+# on a link whose parent directories are missing — precisely the case being
+# looked for here. A relative target is joined to the link's own directory,
+# which is what it is relative to.
+link_target() {
+  local raw
+  raw=$(readlink "$1" 2>/dev/null) || return 1
+
+  case "$raw" in
+    /*) echo "$raw" ;;
+    *)  echo "$(dirname "$1")/$raw" ;;
+  esac
+}
+
 dangling_home_links() {
   find "$HOME" -maxdepth 2 -type l 2>/dev/null | while read -r link; do
-    # -m, not -f: -f returns empty when an intermediate component is missing,
-    # which is precisely the case being looked for, so it would report nothing.
-    target=$(readlink -m "$link" 2>/dev/null)
+    target=$(link_target "$link")
     case "$target" in
       "$HOME"/*|"") continue ;;
     esac
@@ -627,7 +642,7 @@ if [ -n "$BROKEN" ]; then
   echo
   warn "$count symlink(s) in your home point OUT of it, at targets missing on this machine:"
   printf '%s\n' "$BROKEN" | head -6 | while read -r l; do
-    printf '      %s -> %s\n' "${l#$HOME/}" "$(readlink -m "$l")"
+    printf '      %s -> %s\n' "${l#$HOME/}" "$(link_target "$l")"
   done
   [ "$count" -gt 6 ] && echo "      ... and $((count - 6)) more"
   echo "  The links themselves are fine — their targets live on a local disk that this"
