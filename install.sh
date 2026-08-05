@@ -290,7 +290,7 @@ describes_target() {
     tmux) echo "replace your tmux config with this repo's" ;;
     vim)  echo "replace your vim config with this repo's" ;;
     bash) echo "replace your bash config with this repo's" ;;
-    ai)   echo "install three commands: ai-rules and ai-setup (build the rules your AI agents read) and daily-notes-sync (keeps ~/daily-notes in step across machines)" ;;
+    ai)   echo "install four commands: ai-rules and ai-setup (build the rules your AI agents read), daily-notes-sync (keeps ~/daily-notes in step across machines) and ai-hooks (wires the date and daily-notes hooks into each agent)" ;;
     *)    echo "$1" ;;
   esac
 }
@@ -474,6 +474,7 @@ links_for() {
     ai)
       echo "$DOTFILES_DIR/ai/bin/ai-rules|$HOME/.local/bin/ai-rules"
       echo "$DOTFILES_DIR/ai/bin/ai-setup|$HOME/.local/bin/ai-setup"
+      echo "$DOTFILES_DIR/ai/bin/ai-hooks|$HOME/.local/bin/ai-hooks"
       echo "$DOTFILES_DIR/ai/bin/daily-notes-sync|$HOME/.local/bin/daily-notes-sync"
       echo "$DOTFILES_DIR/ai/bin/autorun-mode|$HOME/.local/bin/autorun-mode"
       ;;
@@ -534,6 +535,7 @@ install_ai() {
 
   if $DRY_RUN; then
     warn "would run ai-setup (prompts for local-rules remote, agents, rule modules, notes path and remote)"
+    "$DOTFILES_DIR/ai/bin/ai-hooks" install --dry-run || true
     return 0
   fi
 
@@ -549,6 +551,19 @@ install_ai() {
   if ! "$DOTFILES_DIR/ai/bin/ai-setup"; then
     err "ai-setup did not finish; no rules were written"
     exit 1
+  fi
+
+  # After the rules, because a hook that reminds you about notes is noise on a
+  # machine whose rules never got written.
+  #
+  # Deliberately NOT fatal. ai-hooks exits non-zero when an event is already
+  # running something else, which is a thing to look at rather than a reason to
+  # fail an install that has otherwise done its whole job. Tested in a condition
+  # so `set -e` does not end the run before the message prints.
+  info "Wiring agent hooks"
+
+  if ! "$DOTFILES_DIR/ai/bin/ai-hooks" install; then
+    warn "some hooks were not wired — see above; everything else installed"
   fi
 }
 

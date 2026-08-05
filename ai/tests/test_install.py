@@ -531,8 +531,11 @@ class TestInstallAiTarget(SandboxedTestCase):
             self.assertIn(f"replace your {target} config with this repo's", out)
 
         # And the ai target is described by what it installs, since "AI rules
-        # tooling" is not something a reader can decide on
-        self.assertIn("install three commands", out)
+        # tooling" is not something a reader can decide on. Asserted by naming
+        # the commands rather than counting them — the count changed the first
+        # time a fifth was added and broke this test for no reason.
+        for command in ("ai-rules", "ai-setup", "daily-notes-sync", "ai-hooks"):
+            self.assertIn(command, out)
 
     def test_personal_targets_are_off_unless_asked_for(self):
         out = self.run_install_on_a_terminal(answer="\n" * 8)

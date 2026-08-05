@@ -119,6 +119,32 @@ Then run `ai-rules apply`, which rebuilds the assembled file and leaves every
 agent's symlink pointing at it. Confirm the new text is actually in the assembled
 file afterwards — `ai-rules where` names it — because that is what agents read.
 
+## What install.sh delivers
+
+`./install.sh` is the driver and is safe to re-run — every step is idempotent and
+reports what it would change under `--dry-run`.
+
+| Target | Puts in place |
+|---|---|
+| `tmux` | tmux.conf, dev-layout.sh, clip.sh, TPM |
+| `vim` | vimrc |
+| `bash` | bashrc, bash_profile, osc52-shim |
+| `ai` | ai-rules, ai-setup, ai-hooks, daily-notes-sync, autorun-mode; then runs ai-setup and ai-hooks |
+
+Three delivery mechanisms, chosen by what the artifact is:
+
+- **Rules** are assembled into one file per agent, by `ai-rules apply`. Always
+  loaded, so only things that must apply unasked belong there.
+- **Skills** are symlinked from `ai/skills/` (and the private layer's `skills/`)
+  into each agent's skills directory, also by `ai-rules apply`. Loaded on demand.
+- **Hooks** are merged into each agent's own JSON config by `ai-hooks install`.
+  They cannot be symlinked, because those files hold the user's other settings
+  too — so that tool merges one key and never rewrites the file.
+
+`ai-hooks` refuses to replace a hook it did not write, and exits 1 when it finds
+one, which `install.sh` reports without failing the run. `ai-hooks status` says
+what each agent currently runs.
+
 ## Testing
 
 ```bash

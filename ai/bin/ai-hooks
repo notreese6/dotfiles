@@ -1,0 +1,431 @@
+#!/usr/bin/env python3
+"""
+Install this repo's agent hooks, and report what is wired.
+
+Hooks cannot be symlinked into place the way rules and skills are: each agent
+keeps them inside a JSON file it also uses for everything else — Claude's
+settings.json carries the model, theme and plugin list — so installing one means
+merging into a file that belongs to the user, not writing a file that belongs to
+us.
+
+That shapes every rule here:
+
+    never replace a file        merge one key, leave the rest byte-identical
+    never replace a hook        an event already wired to something else is a
+                                conflict to report, not a thing to overwrite
+    always be re-runnable       a hook already pointing at our script is done,
+                                not a duplicate to append
+
+Agents disagree on both the event names and the file schema, so each is
+described once in AGENTS below rather than special-cased at every call site.
+"""
+
+import argparse
+import json
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Tuple
+
+HOME      = Path.home()
+HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+
+
+@dataclass(frozen=True)
+class HookSpec:
+    """
+    One hook this repo ships, and when it should fire.
+
+    Args:
+        script (str): file name under `ai/hooks/`.
+        event (str): the event name Claude and Codex use.
+        cursor_event (str): Cursor's name for the same moment. Empty when Cursor
+            has no equivalent, in which case it is not wired there.
+        status (str): the one-line status message an agent may display.
+        needs_format (bool): True when the script must be told which output
+            shape to emit, because agents disagree on how a hook returns text.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    script:       str
+    event:        str
+    cursor_event: str
+    status:       str
+    needs_format: bool = False
+
+
+HOOKS = (
+    HookSpec(script="date-context", event="UserPromptSubmit",
+             cursor_event="beforeSubmitPrompt", status="Checking current date",
+             needs_format=True),
+    HookSpec(script="notes-reminder", event="Stop",
+             cursor_event="stop", status="Checking daily notes"),
+)
+
+
+@dataclass(frozen=True)
+class AgentSpec:
+    """
+    Where one agent keeps its hooks, and in what shape.
+
+    Args:
+        name (str): the agent name, matching the `agents` config setting.
+        relpath (Tuple[str, ...]): path parts under HOME to its hooks file.
+        schema (str): "nested" for Claude and Codex, which wrap handlers in a
+            matcher group; "flat" for Cursor, which lists commands directly.
+        seed (dict): keys a newly created file must carry. Cursor rejects a
+            hooks file with no `version`.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    name:    str
+    relpath: Tuple[str, ...]
+    schema:  str
+    seed:    Tuple[Tuple[str, object], ...] = ()
+
+    def path(self):
+        """
+        Resolve this agent's hooks file.
+
+        Args:
+            None
+
+        Returns:
+            pathlib.Path: the file, which may not exist yet.
+
+        Raises:
+            None
+        """
+
+        return HOME.joinpath(*self.relpath)
+
+
+AGENTS = (
+    AgentSpec(name="claude", relpath=(".claude", "settings.json"), schema="nested"),
+    AgentSpec(name="codex",  relpath=(".codex",  "hooks.json"),    schema="nested"),
+    AgentSpec(name="cursor", relpath=(".cursor", "hooks.json"),    schema="flat",
+              seed=(("version", 1),)),
+)
+
+
+def command_for(hook, agent):
+    """
+    Build the command line one agent should run for one hook.
+
+    Args:
+        hook (HookSpec): the hook.
+        agent (AgentSpec): the agent that will run it.
+
+    Returns:
+        str: an absolute command. Absolute because a hook runs with whatever
+        working directory and PATH the agent happens to have, and a bare name
+        that resolves in a shell often does not resolve there.
+
+    Raises:
+        None
+    """
+
+    command = str(HOOKS_DIR / hook.script)
+
+    if hook.needs_format:
+        command += f" --format={agent.name}"
+
+    return command
+
+
+def entry_for(hook, agent):
+    """
+    Build the JSON entry one agent expects for one hook.
+
+    Args:
+        hook (HookSpec): the hook.
+        agent (AgentSpec): the agent whose schema to follow.
+
+    Returns:
+        dict: the entry to place under the event name.
+
+    Raises:
+        None
+    """
+
+    command = command_for(hook, agent)
+
+    if agent.schema == "flat":
+        return {"command": command}
+
+    return {"hooks": [{"type": "command", "command": command,
+                       "statusMessage": hook.status}]}
+
+
+def commands_in(entries):
+    """
+    List every command already wired under one event.
+
+    Args:
+        entries (list): whatever the agent's file holds for that event.
+
+    Returns:
+        list: [str] the commands found. Both schemas are read, so this does not
+        need to know which agent it came from — a file written by hand in the
+        other shape is still understood rather than silently duplicated.
+
+    Raises:
+        None
+    """
+
+    found = []
+
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+
+        if "command" in entry:
+            found.append(str(entry["command"]))
+
+        for nested in entry.get("hooks", []) or []:
+            if isinstance(nested, dict) and "command" in nested:
+                found.append(str(nested["command"]))
+
+    return found
+
+
+def load(path):
+    """
+    Read an agent's hooks file.
+
+    Args:
+        path (pathlib.Path): the file.
+
+    Returns:
+        dict: its contents, or {} when it does not exist.
+
+    Raises:
+        ValueError: the file exists but is not valid JSON. Deliberately fatal —
+            merging into a file we cannot parse would mean rewriting it from
+            scratch, which is exactly the clobber this tool refuses.
+    """
+
+    if not path.is_file():
+        return {}
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def install_into(agent, dry_run=False):
+    """
+    Wire every shipped hook into one agent.
+
+    Args:
+        agent (AgentSpec): the agent to wire.
+        dry_run (bool): True reports what would change and writes nothing.
+
+    Returns:
+        tuple[list, list, list]: (added, already, conflicts). `added` names the
+        hooks newly wired, `already` those found pointing at our script,
+        `conflicts` those whose event is occupied by a command that is not ours
+        — left untouched.
+
+    Raises:
+        OSError: the file cannot be written.
+        ValueError: the existing file is not valid JSON.
+    """
+
+    path     = agent.path()
+    data     = load(path)
+    hooks    = data.setdefault("hooks", {})
+    added, already, conflicts = [], [], []
+
+    for key, value in agent.seed:
+        data.setdefault(key, value)
+
+    for hook in HOOKS:
+        event = hook.cursor_event if agent.schema == "flat" else hook.event
+
+        if not event:
+            continue
+
+        ours     = command_for(hook, agent)
+        existing = commands_in(hooks.get(event))
+
+        if ours in existing:
+            already.append(hook.script)
+            continue
+
+        # Any other command on this event is the user's. Appending ours beside
+        # it would fire both, and replacing it would take away something they
+        # put there on purpose.
+        if existing:
+            conflicts.append((hook.script, event))
+            continue
+
+        hooks[event] = [entry_for(hook, agent)]
+        added.append(hook.script)
+
+    if added and not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    return added, already, conflicts
+
+
+def run_install(args):
+    """
+    Wire the hooks into every agent and report.
+
+    Args:
+        args (argparse.Namespace): parsed arguments; uses args.dry_run.
+
+    Returns:
+        int: 0 when every hook is wired or already was, 1 when any event was
+        occupied by something else — so a script can tell "done" from "someone
+        needs to look at this".
+
+    Raises:
+        OSError: a file cannot be written.
+        ValueError: an existing file is not valid JSON.
+    """
+
+    blocked = False
+
+    for agent in AGENTS:
+        try:
+            added, already, conflicts = install_into(agent, args.dry_run)
+        except ValueError as exc:
+            print(f"[-] {agent.name}: {agent.path()} is not valid JSON ({exc}) — left alone",
+                  file=sys.stderr)
+            blocked = True
+            continue
+
+        verb = "would wire" if args.dry_run else "wired"
+
+        # stdout block-buffers when it is not a tty and stderr never does, so
+        # without this every conflict prints above the lines it belongs beside.
+        # Third time this has bitten in this repo.
+        sys.stdout.flush()
+
+        for name in added:
+            print(f"[+] {agent.name}: {verb} {name}")
+        for name in already:
+            print(f"[*] {agent.name}: {name} already wired")
+        sys.stdout.flush()
+
+        for name, event in conflicts:
+            print(f"[-] {agent.name}: {event} already runs something else — {name} not wired",
+                  file=sys.stderr)
+            blocked = True
+
+    return 1 if blocked else 0
+
+
+def run_status(args):
+    """
+    Report which hooks each agent currently runs, changing nothing.
+
+    Args:
+        args (argparse.Namespace): parsed arguments. Unused; accepted so every
+            subcommand has one signature.
+
+    Returns:
+        int: 0 always. Reporting a state is not something that can fail
+        usefully, and a status command that exits non-zero cannot be used to
+        check one.
+
+    Raises:
+        None. An unreadable or malformed file is reported in place.
+    """
+
+    for agent in AGENTS:
+        path = agent.path()
+
+        if not path.is_file():
+            print(f"[*] {agent.name}: no hooks file at {path}")
+            continue
+
+        try:
+            hooks = load(path).get("hooks", {})
+        except ValueError:
+            print(f"[-] {agent.name}: {path} is not valid JSON", file=sys.stderr)
+            continue
+
+        for hook in HOOKS:
+            event    = hook.cursor_event if agent.schema == "flat" else hook.event
+            existing = commands_in(hooks.get(event))
+            ours     = command_for(hook, agent)
+
+            if ours in existing:
+                state = "ours"
+            elif existing:
+                state = "another command"
+            else:
+                state = "not wired"
+
+            print(f"[*] {agent.name:7} {event:20} {hook.script:16} {state}")
+
+    return 0
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="ai-hooks",
+        description="Wire this repo's hooks into each agent, without disturbing "
+                    "anything else in the files they live in.")
+
+    commands = parser.add_subparsers(dest="command", metavar="command", required=True)
+
+    install = commands.add_parser("install", help="wire every shipped hook into every agent")
+    install.add_argument("--dry-run", action="store_true",
+                         help="report what would change and write nothing")
+    install.set_defaults(run=run_install)
+
+    status = commands.add_parser("status", help="report what each agent currently runs")
+    status.set_defaults(run=run_status)
+
+    return parser
+
+
+def main():
+    """
+    Run the ai-hooks command line.
+
+    Args:
+        None
+
+    Returns:
+        int: process exit status.
+
+    Raises:
+        SystemExit: the arguments are invalid or --help was requested.
+        OSError: a file cannot be written.
+    """
+
+    args = build_parser().parse_args()
+
+    return args.run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
