@@ -625,16 +625,23 @@ BROKEN="$(dangling_home_links)"
 if [ -n "$BROKEN" ]; then
   count=$(printf '%s\n' "$BROKEN" | wc -l | tr -d ' ')
   echo
-  warn "$count symlink(s) in your home point at directories that do not exist here:"
-  printf '%s\n' "$BROKEN" | sed "s|^$HOME|~|; s|^|      |" | head -6
+  warn "$count symlink(s) in your home point OUT of it, at targets missing on this machine:"
+  printf '%s\n' "$BROKEN" | head -6 | while read -r l; do
+    printf '      %s -> %s\n' "${l#$HOME/}" "$(readlink -m "$l")"
+  done
   [ "$count" -gt 6 ] && echo "      ... and $((count - 6)) more"
-  echo "  This is normal on a machine whose home is shared but whose local disk is not."
-  echo "  Installing over it would put files behind links that resolve nowhere."
+  echo "  The links themselves are fine — their targets live on a local disk that this"
+  echo "  machine has not populated yet. Normal when a home is shared between machines"
+  echo "  but the disks behind it are not. Installing over it would put files behind"
+  echo "  links that resolve nowhere."
 
-  if command -v home-local >/dev/null 2>&1; then
-    LAYOUT_TOOL="home-local"
-  elif [ -x /disk01/Projects/misc-utils/bin/home-local ]; then
-    LAYOUT_TOOL="/disk01/Projects/misc-utils/bin/home-local"
+  # Found on PATH or named explicitly — never guessed at a fixed location. Where
+  # such a tool is installed is site-specific, and a path baked in here would be
+  # wrong on every machine that does not share this one's layout.
+  if [ -n "${HOME_LAYOUT_TOOL:-}" ] && [ -x "$HOME_LAYOUT_TOOL" ]; then
+    LAYOUT_TOOL="$HOME_LAYOUT_TOOL"
+  elif command -v home-local >/dev/null 2>&1; then
+    LAYOUT_TOOL="$(command -v home-local)"
   else
     LAYOUT_TOOL=""
   fi
@@ -656,7 +663,8 @@ if [ -n "$BROKEN" ]; then
       *)     "$LAYOUT_TOOL" materialize || warn "layout tool reported problems" ;;
     esac
   elif ! $DRY_RUN; then
-    warn "no layout tool found — fix the layout before relying on this install"
+    warn "no layout tool on PATH — set HOME_LAYOUT_TOOL, or create the missing"
+    warn "targets by hand, before relying on this install"
   fi
   echo
 fi
