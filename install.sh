@@ -598,6 +598,70 @@ $ASSUME_YES && warn "--yes: replacing existing files without asking (originals s
 echo
 
 
+# ---- Home layout preflight ----------------------------------
+# On a machine whose home is a shared network volume, symlinks pointing off that
+# volume arrive already present and already broken: the link lives in the shared
+# home, its target is on a local disk that only the machine that made it has.
+# Installing into a home in that state puts files behind links that resolve
+# nowhere, so this runs before any target does.
+#
+# Detected generically — anything under $HOME pointing outside $HOME at something
+# absent. No dependency on a particular layout or tool.
+
+dangling_home_links() {
+  find "$HOME" -maxdepth 2 -type l 2>/dev/null | while read -r link; do
+    # -m, not -f: -f returns empty when an intermediate component is missing,
+    # which is precisely the case being looked for, so it would report nothing.
+    target=$(readlink -m "$link" 2>/dev/null)
+    case "$target" in
+      "$HOME"/*|"") continue ;;
+    esac
+    [ -e "$target" ] || echo "$link"
+  done
+}
+
+BROKEN="$(dangling_home_links)"
+
+if [ -n "$BROKEN" ]; then
+  count=$(printf '%s\n' "$BROKEN" | wc -l | tr -d ' ')
+  echo
+  warn "$count symlink(s) in your home point at directories that do not exist here:"
+  printf '%s\n' "$BROKEN" | sed "s|^$HOME|~|; s|^|      |" | head -6
+  [ "$count" -gt 6 ] && echo "      ... and $((count - 6)) more"
+  echo "  This is normal on a machine whose home is shared but whose local disk is not."
+  echo "  Installing over it would put files behind links that resolve nowhere."
+
+  if command -v home-local >/dev/null 2>&1; then
+    LAYOUT_TOOL="home-local"
+  elif [ -x /disk01/Projects/misc-utils/bin/home-local ]; then
+    LAYOUT_TOOL="/disk01/Projects/misc-utils/bin/home-local"
+  else
+    LAYOUT_TOOL=""
+  fi
+
+  if [ -n "$LAYOUT_TOOL" ] && ! $DRY_RUN; then
+    echo
+    info "A layout tool is available: $LAYOUT_TOOL"
+    echo "  It will create the missing directories on this machine's local disk."
+    echo "  It will NOT move content that currently lives in the shared home —"
+    echo "  that needs a deliberate --claim, run by hand on the machine that owns it."
+    if $ASSUME_YES; then
+      reply=y
+    else
+      printf "  Fix the layout now? [Y/n]: "
+      read -r reply
+    fi
+    case "$reply" in
+      [Nn]*) warn "skipping; targets that install into local paths may fail" ;;
+      *)     "$LAYOUT_TOOL" materialize || warn "layout tool reported problems" ;;
+    esac
+  elif ! $DRY_RUN; then
+    warn "no layout tool found — fix the layout before relying on this install"
+  fi
+  echo
+fi
+
+
 # ---- Machine role -------------------------------------------
 # Which kind of machine is this? The answer is owned by `autorun-mode`, not by
 # this installer — it has to be changeable later, from any box, without
