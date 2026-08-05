@@ -33,6 +33,33 @@ and into TODOs where they imply follow-up ("read the paper they linked").
 `## Meetings` is **always the last section in the page**, and **dated files
 only** — the `current/` rollup has no Meetings section.
 
+## When a fetch fails — retry, then flag what a retry would fix
+
+A failed chat or transcript fetch is not the same as one that has nothing in it,
+and the difference decides what the follow-up should say.
+
+1. **Retry once, immediately.** Most of these are transient.
+2. **If it still fails, classify it.** A rate limit (HTTP 429) or a timeout will
+   clear on its own. A 403, a missing transcript, or a deleted thread will not.
+3. **Write the follow-up as the cheapest action that would actually work:**
+
+| What failed | The TODO says |
+|---|---|
+| 429, timeout, anything transient | **re-fetch the chat later** — name the meeting and date so the next session can just run it |
+| 403, absent, deleted | ask a person, and say which person and what for |
+
+**Never turn a transient failure into a question for a colleague.** That is the
+mistake worth naming: on 2026-08-05 a meeting chat returned 429 twice, and the
+recap correctly recorded the gap — but phrased both follow-ups as "get this from
+Aditya directly" and "follow up with Kailash directly". The rate limit cleared
+within hours and one re-fetch recovered everything, so two people were queued to
+be interrupted for something a retry would have fixed. The guidance to read the
+chat had been followed; what was missing was any route back to it.
+
+So when a fetch fails, say so **in the recap** *and* leave a `[>]` in
+`current/<project>.md` naming the fetch, not the person. Re-reading a note does
+not re-run anything — only a TODO framed as an action gets performed.
+
 ## Also save the full transcript
 
 In addition to the recap, save the meeting's full transcript **verbatim** to
