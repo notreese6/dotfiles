@@ -35,6 +35,9 @@ def build_parser():
     apply_command = commands.add_parser("apply", help="write the assembled rules to every configured agent")
     apply_command.set_defaults(run=run_apply)
 
+    where_command = commands.add_parser("where", help="print the resolved paths this machine uses")
+    where_command.set_defaults(run=run_where)
+
     return parser
 
 
@@ -102,6 +105,73 @@ def report_written(written):
                   "Cursor > Settings > Rules > User Rules")
 
 
+def report_skills(linked, conflicts):
+    """
+    Say which skills were linked, and which names were already taken.
+
+    Args:
+        linked (list of str): names now pointing at this repo. May be empty.
+        conflicts (list): [(str, pathlib.Path)] a shipped name where something
+            the tool did not create already sits. May be empty.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    if linked:
+        print(f"[+] linked {len(linked)} skill(s): {', '.join(linked)}")
+
+    # Reported rather than resolved. Whatever is already there is the user's,
+    # and replacing it to install ours is the clobber this tool refuses to do
+    # anywhere else.
+    for name, path in conflicts:
+        print(f"[-] skill {name!r} not linked: {path} exists and is not ours", file=sys.stderr)
+
+
+def run_where():
+    """
+    Print where everything actually lives on this machine.
+
+    Exists so nothing else has to name a path that is only true here. Every one
+    of these is configurable or environment-dependent — the config honours
+    $XDG_CONFIG_HOME, the repo can be cloned anywhere, and the private layer has
+    its own setting — so a rule that writes a literal path is wrong on the next
+    machine and gives no hint that it is.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus: OK always. Reporting where things are cannot fail
+        usefully; anything unconfigured prints as (unset) rather than raising.
+
+    Raises:
+        OSError: the config file exists but cannot be read.
+        ValueError: the config file is not valid JSON.
+    """
+
+    config = airules.Config.load()
+    roots  = airules.rules_roots()
+
+    print(f"[*] config:        {airules.config_path()}")
+    print(f"[*] rules source:  {config.ai_dir or '(unset)'}")
+    print(f"[*] private layer: {config.local_rules_dir or '(unset)'}")
+    print(f"[*] assembled:     {airules.assembled_path()}")
+
+    for name in config.agents:
+        agent = airules.SUPPORTED_AGENTS.get(name)
+
+        if agent is None:
+            continue
+
+        print(f"[*] {name + ':':<14} {agent.rules_path(roots)}")
+
+    return airules.ExitStatus.OK
+
+
 def run_apply():
     """
     Assemble the rules and write them to every configured agent.
@@ -157,6 +227,7 @@ def run_apply():
     # rules — each agent path below is only a pointer at it.
     print(f"[+] assembled {result.assembled}")
     report_written(result.written)
+    report_skills(result.skills, result.skill_conflicts)
 
     return airules.ExitStatus.OK
 

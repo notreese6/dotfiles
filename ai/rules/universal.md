@@ -2,95 +2,55 @@
 
 # Using these rules
 
-How this rules system works. Included on every assembly, whatever else is
-switched on, because ignoring it is how someone edits a generated file and loses
-the edit on the next run.
+Where these rules come from, and the one thing that goes wrong if you do not know
+it. Included on every assembly, whatever else is switched on.
 
-## Adding or changing a rule — edit the repo, never the live file
+Deliberately short. It declares `required`, so it lands on every machine whatever
+else was turned down — which makes it the one file where adding a paragraph is a
+decision made on someone else's behalf.
 
-The rules file each agent reads is a **symlink to generated output**. Editing
-`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, or `~/.config/ai-notes/rules.md`
-edits the assembly, and the next `ai-rules apply` overwrites it. The edit is gone
-and nothing says so.
+## Never edit the rules file you are reading
 
-So when I ask for a rule to be added, changed, or removed, edit the **source** and
-re-assemble. Which source depends on what the rule is *and* on which modules this
-machine actually has switched on — a module that is off is not assembled, so a
-rule written into it is saved and then never reaches any agent:
+The file each agent reads is **generated output**, usually a symlink to it.
+Editing it edits the assembly, and the next `ai-rules apply` overwrites the
+change. The edit is gone and nothing says so.
 
-| The rule is | Goes in | Only reaches an agent when |
-|---|---|---|
-| Private — an employer, an internal host, a codename | the private layer, `~/.config/ai-notes/local_rules/*.md` by default (`local_rules_dir` in the config says where) | Always. This layer has no switch |
-| About how this rules system itself works | `ai/rules/universal.md` | Always — it declares `required` |
-| About keeping notes | `ai/rules/daily-notes.md` | `modules."daily-notes"` is true |
-| General, shareable, and notreese's opinion | `ai/rules/misc.md` | `modules.misc` is true |
-| A subject none of those covers | a **new** `ai/rules/<name>.md` | `modules.<name>` is true |
+## Resolve the paths, never assume them
 
-**Check before writing, not after.** `ai-setup --dry-run` prints every module's
-setting and changes nothing. If the natural home for the rule is a module that is
-switched off, say so and offer the choice — turn the module on, or put the rule in the
-private layer instead — rather than writing into a file nothing reads.
+Every path in this system is configurable, and none of them are the same on two
+machines. The repo can be cloned anywhere, the private layer has its own setting,
+and the config file itself honours `$XDG_CONFIG_HOME`. Ask:
 
-**Keep this module short.** It declares `required`, so nobody is asked whether
-they want it — it lands on every machine that installs this, whatever else they
-turned down. That makes it the one place where adding a paragraph is a decision
-made on someone else's behalf. It holds how the rules system works and nothing
-else; an opinion about how to work belongs in `misc.md`, which is asked about and
-off by default.
-
-## Adding a whole new module
-
-`ai/rules/` is globbed, so **a new file is the entire change** — no constant, no
-config key, no prompt to write. Give it a declaration on line 1:
-
-```markdown
-<!-- ai-rules: order=40, default=off, prompt="Include the review-checklist rules" -->
-
-# Review checklist
+```bash
+ai-rules where
 ```
 
-| Entry | Means | Default |
-|---|---|---|
-| `order=N` | sort position, for assembly *and* for the order `ai-setup` asks | 50 |
-| `default=on` / `off` | the answer used before anyone has been asked | `off` |
-| `required` | never asked about, never off | absent |
-| `prompt="..."` | the question asked; quote it if it contains a comma | built from the `# ` heading |
+That prints the config, the rules source, the private layer, the assembled file,
+and the file each configured agent reads. Use what it says.
 
-Declaring nothing is valid: the file is then asked about and off until you say
-yes. The next `ai-setup` asks about it in `order` position and records the answer
-under `modules` in the config; `ai-rules apply` wraps it in markers naming the
-file, so the assembled document says where each section came from.
+If that command is unavailable, the config file is the fallback source of truth —
+`ai_dir` names the rules source and `local_rules_dir` the private layer. **Do not
+write a literal path into a rule**; it will be wrong on the next machine and give
+no sign that it is.
 
-**The private layer works the same way** — same glob, same README skip, same
-declaration line, same ordering, same markers. One difference: nothing there is
-ever asked about, because a private file is machine-local and was put there
-deliberately. So it applies unless it declares `default=off`, which is how a
-private rule is shelved without deleting it. `required` and `prompt` have
-nothing to act on there and are unused.
+## Which source a rule belongs in
 
-**Your agent files are replaced whatever you answer.** Configuring an agent is
-what points its rules file at the assembled one; the module questions decide what
-goes *into* that file, not whether it replaces yours. Saying no to every module
-still leaves a symlink where your file was — just with less in it. `ai-setup`
-says so before it asks anything, and the original goes to the backup directory.
+| The rule is | Goes in |
+|---|---|
+| Private — an employer, an internal host, a codename | the private layer (`local_rules_dir`) |
+| About keeping notes | `ai/rules/daily-notes.md` under the rules source |
+| General, shareable, and notreese's opinion | `ai/rules/misc.md` under the rules source |
+| About the rules system itself | the rules source repo's own `AGENTS.md` |
 
-**Two things are hard errors rather than skips**, because a rule silently missing
-looks exactly like a rule being followed:
+Then run `ai-rules apply` and confirm the text is in the assembled file. Adding a
+rule is not done until that has run.
 
-- A module the config switched on whose file has gone away. `ai-rules apply`
-  refuses and writes nothing.
-- Every layer empty. The live rules are left alone rather than replaced with a
-  document holding none.
-
-Then run `ai-rules apply`, which rebuilds the assembled file and leaves every
-agent's symlink pointing at it. Confirm the new text is actually in
-`~/.config/ai-notes/rules.md` afterwards; that is the file the agents read.
-
-**Why:** an edit to the live file looks like it worked and survives until the next
-apply, which may be days later and will not mention what it discarded. Editing the
-source is the only change that lasts.
+**Read that repo's `AGENTS.md` before changing anything in it.** It carries the
+rest — how to add a module, the front-matter spec, how to check the subject is
+not already covered, and what the hard errors are. Those instructions are only
+actionable inside that repo, so they live there rather than in every session on
+every machine.
 
 **How to apply:** before editing any rules file, check whether it is a symlink
-(`ls -l` on it). If it is, you are looking at generated output — find the source in
-the repo and edit that instead. Adding a rule is not done until `ai-rules apply`
-has run.
+(`ls -l` on it). If it is, you are looking at generated output — run
+`ai-rules where` to find the source.

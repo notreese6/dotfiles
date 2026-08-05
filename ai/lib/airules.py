@@ -51,6 +51,17 @@ MODULE_END_TEMPLATE   = "### END {name} ###"
 RULES_DIRNAME = "rules"
 RULES_GLOB    = "*.md"
 
+# Skills are a different artifact from rules and are shipped as themselves rather
+# than assembled: each is a directory holding a SKILL.md, in the format all three
+# agents already read. Nothing is generated, so the file in the repo IS the file
+# the agent loads, reached through a symlink.
+#
+# Rules are pushed — always present, whatever the task. A skill is pulled, loaded
+# only when the agent judges its description relevant. Anything that must apply
+# without being asked for belongs in a rules module, not here.
+SKILLS_DIRNAME  = "skills"
+SKILL_ENTRY     = "SKILL.md"
+
 # Each module declares its own metadata on line 1, in an HTML comment so that
 # rendered markdown never shows it:
 #
@@ -233,6 +244,32 @@ class SupportedAgent:
     root:               RulesRoot
     relpath:            Tuple[str, ...]
     needs_manual_paste: bool = False
+    skills_relpath:     Tuple[str, ...] = ()
+
+    def skills_path(self, roots):
+        """
+        Resolve the directory this agent discovers skills in.
+
+        Always under HOME, unlike `rules_path`. The two genuinely differ for
+        Cursor: it reads its rules out of a settings box, so its rules text is
+        parked beside the config for pasting, but it discovers skills on disk
+        exactly like the others.
+
+        Args:
+            roots (dict): {RulesRoot: pathlib.Path}. Must carry a HOME entry.
+
+        Returns:
+            pathlib.Path or None: the directory, or None for an agent with no
+            skills support. Not guaranteed to exist.
+
+        Raises:
+            KeyError: `roots` carries no HOME entry.
+        """
+
+        if not self.skills_relpath:
+            return None
+
+        return roots[RulesRoot.HOME].joinpath(*self.skills_relpath)
 
     def rules_path(self, roots):
         """
@@ -266,10 +303,13 @@ class SupportedAgent:
 SUPPORTED_AGENTS = {
     agent.name: agent
     for agent in (
-        SupportedAgent(name="claude", root=RulesRoot.HOME,       relpath=(".claude", "CLAUDE.md")),
-        SupportedAgent(name="codex",  root=RulesRoot.HOME,       relpath=(".codex",  "AGENTS.md")),
+        SupportedAgent(name="claude", root=RulesRoot.HOME,       relpath=(".claude", "CLAUDE.md"),
+                       skills_relpath=(".claude", "skills")),
+        SupportedAgent(name="codex",  root=RulesRoot.HOME,       relpath=(".codex",  "AGENTS.md"),
+                       skills_relpath=(".codex",  "skills")),
         SupportedAgent(name="cursor", root=RulesRoot.CONFIG_DIR, relpath=("cursor-user-rules.txt",),
-                       needs_manual_paste=True),
+                       needs_manual_paste=True,
+                       skills_relpath=(".cursor", "skills")),
     )
 }
 
@@ -509,6 +549,12 @@ class ApplyResult:
         assembled (pathlib.Path): the one file holding the assembled rules, which
             every entry in `written` now points at. Reported because it, not the
             agent paths, is the file to open to see what was applied.
+        skills (list): [str] names of the skills this repo ships that are now
+            linked into at least one agent. May be empty when the repo ships
+            none.
+        skill_conflicts (list): [(str, pathlib.Path)] a shipped name where
+            something the tool did not create already occupies it. Left
+            untouched; the caller reports them. May be empty.
 
     Returns:
         None
@@ -520,6 +566,8 @@ class ApplyResult:
     written:   List[WrittenRules]
     unknown:   List[str]
     assembled: Path
+    skills:          List[str] = field(default_factory=list)
+    skill_conflicts: List[tuple] = field(default_factory=list)
 
 
 def config_path():
@@ -1868,6 +1916,32 @@ def configured_agents():
     return Config.load().agents
 
 
+def rules_roots():
+    """
+    Resolve the directories every agent path is built against.
+
+    In one place because a run must build all of them against the same
+    directories. Two callers each computing their own mapping is how an agent's
+    rules file and the skills beside it end up resolved under different homes,
+    with nothing to show for it until something reads the wrong one.
+
+    Args:
+        None
+
+    Returns:
+        dict: {RulesRoot: pathlib.Path} carrying an entry for every RulesRoot
+        member. The paths are not guaranteed to exist.
+
+    Raises:
+        None
+    """
+
+    return {
+        RulesRoot.HOME:       Path(os.path.expanduser("~")),
+        RulesRoot.CONFIG_DIR: config_path().parent,
+    }
+
+
 def agent_targets(names):
     """
     Map agent names to the rules file each one reads.
@@ -1889,10 +1963,7 @@ def agent_targets(names):
 
     # Resolved once for the whole run, not per agent: every target below is then
     # built against the same directories, and one lookup names what each is for.
-    roots = {
-        RulesRoot.HOME:       Path(os.path.expanduser("~")),
-        RulesRoot.CONFIG_DIR: config_path().parent,
-    }
+    roots = rules_roots()
 
     targets = []
     unknown = []
@@ -2196,6 +2267,86 @@ def _append_to_target(target, assembled_text):
     _atomic_write(target, additive_text(existing, assembled_text))
 
 
+def skill_sources(base_dir):
+    """
+    List the skills this repo ships.
+
+    Args:
+        base_dir (str or pathlib.Path): the `ai/` directory holding `skills/`.
+
+    Returns:
+        list: [pathlib.Path] one directory per skill, sorted by name. A
+        directory with no SKILL.md is not a skill and is skipped, so a
+        half-written one is ignored rather than linked into every agent.
+
+    Raises:
+        OSError: `skills/` exists but cannot be listed.
+    """
+
+    root = Path(base_dir) / SKILLS_DIRNAME
+
+    if not root.is_dir():
+        return []
+
+    return sorted(p for p in root.iterdir() if (p / SKILL_ENTRY).is_file())
+
+
+def link_skills(agent, roots, base_dir):
+    """
+    Point one agent's skills directory at the skills this repo ships.
+
+    Only names this repo ships are touched. An agent's skills directory holds
+    everything else the user has installed — over a hundred of them on a working
+    machine — and this must be able to run without putting any of that at risk.
+
+    Args:
+        agent (SupportedAgent): the agent whose directory to populate.
+        roots (dict): {RulesRoot: pathlib.Path}. Must carry a HOME entry.
+        base_dir (str or pathlib.Path): the `ai/` directory holding `skills/`.
+
+    Returns:
+        tuple[list, list]: (linked, conflicts). `linked` holds the names now
+        pointing at this repo. `conflicts` holds (name, path) pairs where
+        something that is NOT one of our symlinks already occupies the name —
+        left untouched, for the caller to report. Both empty when the agent has
+        no skills support or the repo ships none.
+
+    Raises:
+        OSError: the skills directory cannot be created, or a link cannot be
+            written.
+    """
+
+    destination = agent.skills_path(roots)
+    sources     = skill_sources(base_dir)
+
+    if destination is None or not sources:
+        return [], []
+
+    linked, conflicts = [], []
+
+    destination.mkdir(parents=True, exist_ok=True)
+
+    for source in sources:
+        target = destination / source.name
+
+        # A symlink is ours to replace; anything else is the user's. Compared by
+        # resolved path rather than by existence, so a link that has gone stale
+        # (the repo moved) is refreshed instead of being mistaken for a conflict.
+        if target.is_symlink():
+            if target.resolve() == source.resolve():
+                linked.append(source.name)
+                continue
+            target.unlink()
+        elif target.exists():
+            conflicts.append((source.name, target))
+            continue
+
+        target.symlink_to(source, target_is_directory=True)
+        linked.append(source.name)
+
+    return linked, conflicts
+
+
 def apply_rules(base_dir):
     """
     Assemble the rules and write them to every configured agent's file.
@@ -2313,4 +2464,16 @@ def apply_rules(base_dir):
         written.append(WrittenRules(agent=target.agent, target=target.path,
                                     backup=backup, is_appended=is_additive))
 
-    return ApplyResult(written=written, unknown=resolved.unknown, assembled=assembled)
+    # After the rules, because a skill is worthless without the rules that say
+    # when to reach for it, and because a failure here must not leave an agent
+    # with no rules file at all.
+    skills, conflicts = [], []
+    roots             = rules_roots()
+
+    for target in resolved.targets:
+        agent_skills, agent_conflicts = link_skills(target.agent, roots, base)
+        skills.extend(n for n in agent_skills if n not in skills)
+        conflicts.extend(agent_conflicts)
+
+    return ApplyResult(written=written, unknown=resolved.unknown, assembled=assembled,
+                       skills=skills, skill_conflicts=conflicts)
