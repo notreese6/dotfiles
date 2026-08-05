@@ -1,0 +1,22 @@
+# Paths this repository must never commit, whatever the files contain.
+#
+# Read by leak-check (misc-utils). Format: severity|regex|label — `file` matches
+# a path rather than content, and blocks even on an internal remote, because
+# these are a deliberate statement about this project rather than a guess about
+# what might identify someone.
+#
+# Committed on purpose: a rule that travels with the clone protects every
+# checkout, and a directory name is not a secret. Ported from the retired
+# ai/bin/repo-scan, which was gitignored and therefore only ever protected the
+# one machine it happened to exist on.
+#
+# .gitignore is not enough on its own. It stops a file being ADDED; it does
+# nothing about one already tracked, which is exactly how a private file
+# survives a later ignore rule.
+
+# Plans and design docs. Working notes, not something to publish.
+file|^docs/|docs/ is deliberately unpublished
+
+# The private rules layer. Its .gitignore placeholder is the only member that
+# may ever be tracked; everything else in there is site-specific by definition.
+file|^ai/local_rules/(?!\.gitignore$).+|private rules layer must never ship

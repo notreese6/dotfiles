@@ -633,6 +633,12 @@ dangling_home_links() {
     esac
     [ -e "$target" ] || echo "$link"
   done
+
+  # Explicitly successful. The loop always ends on the `read` that hits EOF, and
+  # that read returns 1 — so without this the function reports failure every time,
+  # including on a home with nothing wrong with it, and `set -e` aborts the
+  # install right here. Finding no broken links is the good outcome, not an error.
+  return 0
 }
 
 BROKEN="$(dangling_home_links)"
@@ -669,9 +675,17 @@ if [ -n "$BROKEN" ]; then
     echo "  that needs a deliberate --claim, run by hand on the machine that owns it."
     if $ASSUME_YES; then
       reply=y
-    else
+    elif [ -t 0 ]; then
       printf "  Fix the layout now? [Y/n]: "
-      read -r reply
+      read -r reply || reply=n
+    else
+      # Nobody to ask. Skip rather than block on a read that cannot be answered
+      # — under `set -e` the failed read aborts the install outright, and this
+      # branch is only reached on a machine that already has broken links, i.e.
+      # exactly the one being provisioned. Skipping only forgoes creating
+      # directories, and the warning below says so; --yes is how a script asks
+      # for it to run anyway.
+      reply=n
     fi
     case "$reply" in
       [Nn]*) warn "skipping; targets that install into local paths may fail" ;;
@@ -698,15 +712,24 @@ AUTORUN_CMD="$DOTFILES_DIR/ai/bin/autorun-mode"
 ROLE_WANTED="${NV_MACHINE_ROLE:-}"
 
 if [ -z "$ROLE_WANTED" ] && ! $DRY_RUN && ! $ASSUME_YES; then
-  echo
-  info "Machine role: is this an AUTORUN box?"
-  echo "  An AUTORUN box runs agents unattended, with an isolated agent config,"
-  echo "  a sandbox confining them to one writable tree, and every note tagged"
-  echo "  ${c_red}[AUTORUN]${c_reset}. Say no for an ordinary workstation or dev box."
-  echo "  Changeable any time with: autorun-mode on | off | status"
-  printf "  Make this an AUTORUN box? [y/N]: "
-  read -r reply
-  case "$reply" in [Yy]*) ROLE_WANTED="autorun" ;; *) ROLE_WANTED="interactive" ;; esac
+  if [ -t 0 ]; then
+    echo
+    info "Machine role: is this an AUTORUN box?"
+    echo "  An AUTORUN box runs agents unattended, with an isolated agent config,"
+    echo "  a sandbox confining them to one writable tree, and every note tagged"
+    echo "  ${c_red}[AUTORUN]${c_reset}. Say no for an ordinary workstation or dev box."
+    echo "  Changeable any time with: autorun-mode on | off | status"
+    printf "  Make this an AUTORUN box? [y/N]: "
+    read -r reply || reply=""
+    case "$reply" in [Yy]*) ROLE_WANTED="autorun" ;; *) ROLE_WANTED="interactive" ;; esac
+  else
+    # No terminal to ask at — a test harness, a provisioning script, a pipe.
+    # Prompting anyway blocks on a `read` nobody can answer, and under `set -e`
+    # the failed read aborts the whole install. Take the safe role instead: the
+    # same rule --yes follows, that the unattended role is only ever granted by
+    # someone saying so out loud. NV_MACHINE_ROLE is how a script says it.
+    ROLE_WANTED="interactive"
+  fi
 fi
 
 # --yes must not be able to hand a machine the unattended role by accident;

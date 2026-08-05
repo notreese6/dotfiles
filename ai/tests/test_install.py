@@ -248,8 +248,9 @@ class TestInstallAiTarget(SandboxedTestCase):
         for name in (".tmux.conf", ".vimrc", ".bashrc"):
             (self.home / name).write_text(f"# my {name}\n", encoding="utf-8")
 
+        # no to the AUTORUN machine-role question, then:
         # yes to tmux, no to vim, yes to bash, yes to ai
-        self.run_install_on_a_terminal(answer="y\nn\ny\ny\n" + "\n" * 6)
+        self.run_install_on_a_terminal(answer="n\ny\nn\ny\ny\n" + "\n" * 6)
 
         self.assertTrue((self.home / ".tmux.conf").is_symlink())
         self.assertFalse((self.home / ".vimrc").is_symlink())
@@ -601,10 +602,11 @@ class TestInstallAiTarget(SandboxedTestCase):
         # ignore. Only what THIS run creates is the test's business.
         before = {p.name for p in self.repo.iterdir()}
 
-        # First prompt is the backup directory, second is the replace
-        # confirmation. A bare word here used to become a path relative to the
-        # working directory, which is the repo.
-        self.run_install_on_a_terminal("vim", answer="mybackups\ny\n",
+        # Prompt order: the backup directory first (it is asked at the top of the
+        # script), then the AUTORUN machine-role question, then the replace
+        # confirmation. A bare word for the backup used to become a path relative
+        # to the working directory, i.e. the repo.
+        self.run_install_on_a_terminal("vim", answer="mybackups\nn\ny\n",
                                        AI_SETUP_BACKUP_DIR=None)
 
         self.assertTrue((self.home / "mybackups").is_dir())
