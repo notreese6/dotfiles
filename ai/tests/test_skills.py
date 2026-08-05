@@ -227,5 +227,53 @@ class TestOneAgentTable(SandboxedTestCase):
         self.assertEqual(added.native_event("stop"), "onStop")
 
 
+class TestShippedSkillsAreLoadable(unittest.TestCase):
+    """
+    Covers the frontmatter every skill this repo ships has to carry.
+    """
+
+    def shipped(self):
+        """
+        List the skills in this repo, as (directory name, SKILL.md text).
+
+        Args:
+            None
+
+        Returns:
+            list: [(str, str)] one pair per skill directory holding a SKILL.md,
+            sorted by name. Empty only if the repo ships no skills.
+
+        Raises:
+            OSError: a SKILL.md exists but cannot be read.
+        """
+
+        root = REPO_ROOT / "ai" / "skills"
+
+        return sorted((p.parent.name, p.read_text(encoding="utf-8"))
+                      for p in root.glob("*/SKILL.md"))
+
+    def test_every_shipped_skill_declares_a_name_matching_its_directory(self):
+        for name, text in self.shipped():
+            with self.subTest(skill=name):
+                # link_skills only checks that a SKILL.md exists, so a skill
+                # whose frontmatter is malformed or misnamed links cleanly and
+                # then never loads — the failure is silence, in the one
+                # mechanism whose whole job is to load on demand.
+                self.assertTrue(text.startswith("---\n"), "no frontmatter block")
+                self.assertIn(f"\nname: {name}\n", text)
+
+    def test_every_shipped_skill_describes_when_to_use_it(self):
+        for name, text in self.shipped():
+            with self.subTest(skill=name):
+                front = text.split("---", 2)[1]
+                after = front.split("description:", 1)
+
+                # The description is the only thing an agent reads when deciding
+                # whether to load a skill. An empty one is a skill that ships,
+                # links, and is never chosen.
+                self.assertEqual(len(after), 2, "no description")
+                self.assertGreater(len(after[1].strip()), 40, "description too thin to match on")
+
+
 if __name__ == "__main__":
     unittest.main()

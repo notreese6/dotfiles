@@ -99,21 +99,9 @@ belongs to it), surface that project's `[!]` items and anything dated within 7
 days. Nothing else, and not again in that session unless something changes or I
 ask for it.
 
-This is deliberately session-scoped with no stored timestamp. A "last surfaced"
-stamp in `current/<project>.md` would rewrite the file every time it is merely
-*read*, manufacturing cross-machine sync conflicts for no benefit. A session is
-already about a work block, so once per session lands near once or twice a day
-on its own.
-
 **`## In Progress` uses the same markers** so one scan finds everything, but it is
 **not** force-sorted — its order carries the narrative of how the work went. Mark
 an in-progress item `[!]` when it is blocked or has a date bearing down on it.
-
-**Why:** a deadline written into prose is invisible. One project's rollup carried
-a hard external deadline for days as an ordinary sentence in an ordinary bullet,
-indistinguishable from a note about something already finished — and it was two
-days out before anyone noticed. The marker and the date exist so a time-sensitive
-item announces itself instead of waiting to be re-read.
 
 **How to apply:** assign a marker whenever you add or touch a TODO — never write
 a bare `- ` bullet under `## TODOs`. When you touch any TODO in a file, re-sort
@@ -135,17 +123,22 @@ After finishing a **substantial task** — a feature/fix that lands, a non-trivi
 
 **Layout:** `<notes>/<YYYY-MM-DD>/<project>.md` (moved out of `~/Documents` on 2026-07-27 — that folder is macOS TCC-protected, which blocks agents/tools that lack a per-app grant, silently so in non-interactive runs) — `<YYYY-MM-DD>` is today's local date (compute it, e.g. `date +%F`); `<project>` is the project being worked on (git repo / working-dir name, e.g. `coverage-automation`). One file per project per day. For work **not tied to a single project** — general tooling, automation, workflow/settings changes, the notes system itself — use `general` as the `<project>` (i.e. `<notes>/<YYYY-MM-DD>/general.md`). That kind of meta-work is an accomplishment in its own right and gets recorded there, not crammed into a project's file.
 
-**Pick the right project (every update):** before writing any of these files, decide which project the work actually belongs to — do NOT assume it's the session's origin project. A session that started on one project (e.g. coverage-automation) may turn to a different project, or touch several at once. File under the matching `<project>.md` (or `general.md`); if the work spans a group of projects, update each one's files.
+**Pick the right project (every update):** before writing any of these files, decide which project the work actually belongs to — do NOT assume it's the session's origin project. A session that started on one project (e.g. coverage-automation) may turn to a different project, or touch several at once. File under the matching `<project>.md` (or `general.md`); if the work spans a group of projects, update each one's files. That is *which* project; step 2 of the procedure below is what it is *called*, and both have to be right.
 
 **`current/` live rollup:** `<notes>/current/<project>.md` holds the live **In Progress + TODOs** for each project (no Accomplishments — those are the dated history). It is the single "what's open right now" view. On every update, re-read and reconcile the relevant `current/` file(s): promote a TODO to In Progress when it's started; when an item finishes, remove it from `current/` and record it as an Accomplishment in that day's dated file; add newly-surfaced TODOs. Keep `current/` matching reality.
 
 **Capturing TODOs (any session, any project — this is global):** Whenever you raise, change, or finish a TODO in conversation — *not only* when a big task completes — immediately reflect it in BOTH that project's `current/<project>.md` and today's `<date>/<project>.md` TODOs, filed under the right project. This whole notes system is global across all sessions and projects: a TODO about a different project (even one raised mid-session here) is captured under *that* project, not the session's origin project.
 
 **Procedure, every time:**
-1. Ensure today's date folder exists (create it if missing). Open the project file if it exists; otherwise create it with the three headings below.
-2. **Read the whole file first** to get the full picture before writing.
-3. **Reconcile to keep it accurate:** move any item whose state changed into the right section — a TODO we've started → In Progress; a TODO or In-Progress item we've finished → Accomplishments.
-4. Add or update the new work in the right section (update an existing entry in place, don't duplicate), then save.
+1. **Run `daily-notes-sync pull`.** These notes are shared between machines, so the file on this one can be stale before you open it. It commits nothing, so it is safe at any point. If it names a file you are about to write, re-read that file and reconcile — do not overwrite it with what you had in mind before you knew.
+2. **Resolve the project name against the names already in use — never invent one without looking.** List `<notes>/current/` and the recent dated folders first. If the work belongs to a project already logged there, use *that* name exactly, even when another spelling reads better. Only create a new `<project>.md` when nothing there is this project.
+3. Ensure today's date folder exists (create it if missing). Open the project file if it exists; otherwise create it with the three headings below.
+4. **Read the whole file first** to get the full picture before writing.
+5. **Reconcile to keep it accurate:** move any item whose state changed into the right section — a TODO we've started → In Progress; a TODO or In-Progress item we've finished → Accomplishments.
+6. Add or update the new work in the right section (update an existing entry in place, don't duplicate), then save.
+7. **Run `daily-notes-sync`.** It pulls, commits and pushes. A note that never leaves this machine is not a note the other machines have.
+
+**Why step 2 comes before everything else:** one project logged under two names (`dotfiles` and `dotfiles-ai`, `coverage-automation` and `coverage_automation`) splits its history in two, and neither half ever says so. The reconcile in step 5 then reconciles the *other* file — the new name's file has no open TODOs to contradict, so it reads as a clean project while the real one silently stops being updated. It is the one mistake here that looks more correct the longer it goes on.
 
 **Sections (use these exact headings):**
 - `## Accomplishments` — short: what was achieved, how, and the workflow/approach, a sentence or two each.
@@ -153,49 +146,8 @@ After finishing a **substantial task** — a feature/fix that lands, a non-trivi
 - `## TODOs` — identified work not yet started.
 - `## Meetings` (**always the last section in the page**) — recap of any meetings that day: attendees, what was decided, action items. **Dated files only — the `current/` rollup has no Meetings section.**
 
-**Sourcing a meeting recap (transcript AND chat):** when building a meeting recap, do NOT stop at the transcript — **always also read the meeting/Teams chat thread** and capture anything important shared there: links, papers, shared docs, file/code paths, repro commands, follow-ups, or decisions. Chat-only resources (e.g. a paper or drive link pasted mid-call, a code path someone dropped) never appear in the spoken transcript and are silently lost if you only read the audio. Fold those links/resources into the recap, and into TODOs where they imply follow-up (e.g. "read the paper they linked").
-
-**Also save the full transcript:** in addition to the recap, save the meeting's full transcript **verbatim** to `<notes>/<date>/transcripts/<meeting-slug>.md` — a short header (meeting, date/time, attendees, recording link) followed by the raw transcript. If the transcript isn't retrievable — Teams keeps only the ~2 most recent transcripts per recurring series, and org meetings you didn't organize can return a 403 — note that in the recap instead of leaving an empty file.
-
-**Markdown safety:** in note content, wrap any path, template, or placeholder that contains angle brackets in backticks (e.g. `<date>`, `<project>`, or a whole template like `<notes>/<date>/<project>.md`). A raw `<word>` is parsed as an HTML tag by the renderer and silently breaks the line.
-
-**`daily-notes-sync` reads the same config**, so it needs no path argument — run it from anywhere.
-
-**`daily-notes-sync status` answers "is this set up, and where?" in one place**, changes
-nothing, and exits 0 whatever it finds. Run it when a sync reports something you did not
-expect, or before concluding that notes are unavailable — it distinguishes "no notes path
-configured" from "the directory is not a repository" from "local only, nothing syncs", which
-a failed sync does not.
-
-**Syncing across machines — `daily-notes-sync`.** These notes are shared between several machines, so a note written here can be stale before it is saved. Two commands, in this order:
-
-1. **Before reading or editing any note, run `daily-notes-sync pull`.** It reports what changed on the other machines and commits nothing, so it is safe to run at any point. If it names the file you are about to write, **re-read that file and reconcile** — do not overwrite it with what you had in mind before you knew.
-2. **After logging, run `daily-notes-sync`.** It pulls, commits everything, and pushes.
-
-What its output means:
-
-| It says | Means |
-|---|---|
-| `[*] already current` | nobody else has written since your last sync |
-| `[+] N file(s) changed on the remote` | re-read the listed files before writing them |
-| `[+] pushed` | your notes are on the remote |
-| `[*] nothing to push` | the remote already has everything; nothing was sent |
-| `[-] could not push` | committed locally, delivery pending. **Not a failure** — carry on |
-| `[-] conflicting edits…` | **stop and ask.** See below |
-
-**A conflict means stop and ask.** Two machines edited the same note and the tool will not choose between them, because both sides are prose someone wrote. It aborts cleanly and leaves your working tree exactly as it was — nothing is half-merged and there are no conflict markers in your files. Report which files it named and wait; do not attempt to reconcile them yourself.
-
-**Sync being unavailable never excuses not logging.** The note is the point; the
-syncing is delivery. Write it exactly as usual when `daily-notes-sync` reports
-that the directory is not a git repository, that no remote is configured, or
-that it could not reach the remote. Mention the state once so it can be fixed,
-then carry on — a machine whose notes are local-only is a working machine, not a
-broken one.
-
-**A failed push is not a failure.** The note is committed locally and goes out on the next sync. Do not retry in a loop, and do not treat it as a reason to stop working.
-
-**If it says the directory is not a git repository**, say so and stop. Do not run `git init` — whether these notes become a repository is not an agent's decision.
-
-**Why / how to apply:** this is a *nudge I follow*, not a `settings.json` hook — the summary and the section reconciliation need judgment a deterministic hook can't do, so it's best-effort. If I miss it, say "update daily notes."
-
-**Accuracy / dating (I can't perceive elapsed time):** Always derive the date from `date +%F` at the moment of writing — never guess how much time has passed or which day past work happened on. A day's file holds only that day's work; never compress a multi-day arc into one file. When recapping or backfilling, treat `git log --date=short` commit dates (and timestamps in tool output) as the authoritative timeline — record commit-anchored work under its commit date, and mark diagnosis / non-commit work (which has no timestamp) as approximate. The rolling cross-session state lives in project memory (e.g. `jira-ticket-progress.md`); the notes directory is the per-day record — maintain both.
+**When to reach for the skill:** a meeting recap, a backfill, or anything
+`daily-notes-sync` said that you did not expect — **invoke the `daily-notes`
+skill**. It carries the recap procedure, transcript saving, the sync output
+table, conflict handling, and the dating rules for work you did not watch
+happen. Logging work that just landed needs nothing beyond what is above.

@@ -3,7 +3,7 @@ import os
 import subprocess
 import unittest
 from pathlib import Path
-from base import SandboxedTestCase
+from base import REPO_ROOT, SandboxedTestCase
 import airules
 
 TOOL_RULES = '# Using these rules\n\nTOOL_MARKER: edit the repo, never the live file.\n'
@@ -971,6 +971,57 @@ class TestBackupGuard(SandboxedTestCase):
         # Not ours, so its contents are as irreplaceable as a regular file's
         backup = airules._back_up(path, self.assembled, self.into)
         self.assertEqual(backup.read_text(encoding="utf-8"), "SOMEONE ELSE'S RULES\n")
+
+
+class TestShippedNotesModule(unittest.TestCase):
+    """
+    Covers the steps the always-on notes module must not lose to a trim.
+    """
+
+    def upkeep_procedure(self):
+        """
+        Read the numbered write procedure out of the shipped notes module.
+
+        Args:
+            None
+
+        Returns:
+            str: the text between the procedure heading and the section that
+            follows it.
+
+        Raises:
+            OSError: the module cannot be read.
+            ValueError: either boundary heading has been renamed, which is
+            itself a reason to look at this test rather than delete it.
+        """
+
+        text  = (REPO_ROOT / "ai" / "rules" / "daily-notes.md").read_text(encoding="utf-8")
+        start = text.index("**Procedure, every time:**")
+        end   = text.index("**Sections (use these exact headings):**", start)
+
+        return text[start:end]
+
+    def test_the_write_procedure_resolves_the_project_name_before_creating_a_file(self):
+        procedure = self.upkeep_procedure()
+
+        # Logging one project under two names splits its history in two and
+        # neither half says so — and the reconcile then updates the wrong file,
+        # which reads as a clean project rather than a broken one. Wrong project
+        # name is a wrong note, so this is always-on rather than in the skill.
+        self.assertIn("Resolve the project name against the names already in use", procedure)
+        self.assertIn("current/", procedure)
+
+    def test_the_write_procedure_pulls_before_writing_and_pushes_after(self):
+        procedure = self.upkeep_procedure()
+
+        # Both directions were moved to a skill during a trim and neither
+        # arrived, so nothing required either one and a note that clobbered
+        # another machine still looked like the rule working. Skipping the pull
+        # overwrites someone else's edit; skipping the push leaves the note on
+        # one box. Either makes the note wrong, which is what keeps them here
+        # rather than in the pull-only skill.
+        self.assertIn("daily-notes-sync pull", procedure)
+        self.assertIn("It pulls, commits and pushes", procedure)
 
 
 if __name__ == "__main__":

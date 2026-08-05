@@ -49,7 +49,10 @@ REMINDER = (
     "work landed — a fix that works, a commit or MR, a root cause, a decision — "
     "record it now in the right project's file for today, and reconcile that "
     "project's current/ rollup. If nothing substantial happened, say so in one "
-    "line and carry on; this is asked once per session, not per turn."
+    "line and carry on; this is asked once per session, not per turn. For a "
+    "meeting recap, a backfill, or anything daily-notes-sync said that you did "
+    "not expect, invoke the `daily-notes` skill — naming it here rather than "
+    "leaving you to remember it is the point of saying this at all."
 )
 
 
