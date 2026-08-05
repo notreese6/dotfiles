@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""
+Stop hook: ask, once per session, whether today's work has been written down.
+
+Two misses in five days (2026-07-31 and 2026-08-04) established that prose
+cannot enforce this. The rule itself already conceded as much — "a nudge I
+follow, not a settings.json hook ... if I miss it, say update daily notes" — and
+having to say it twice is that rule failing on its own terms.
+
+The split this hook makes deliberately:
+
+    the HOOK decides whether to ask     — deterministic: has today's note file
+                                          been written to at all?
+    the MODEL decides whether to act    — judgment: was any of this substantial
+                                          enough to be worth recording?
+
+It does not try to detect "substantial work". Nothing available to a shell
+script can, and a hook that guessed would either nag through every trivial
+session or stay quiet through the ones that mattered. Asking once costs a line;
+guessing wrong costs the habit.
+
+Reads the hook payload on stdin and writes a decision on stdout, which is the
+contract Claude Code and Codex share. Silent and exit 0 whenever it has nothing
+to say, so it can never be the reason a turn fails.
+"""
+
+import json
+import os
+import sys
+from datetime import date
+from pathlib import Path
+
+HOME = Path.home()
+
+# Same resolution order as autorun-mode: an explicit override, then the site
+# profile, then XDG. On a machine whose home is a shared network volume,
+# "somewhere under ~" is the wrong answer and only the site knows the right one.
+STATE_DIR = Path(
+    os.environ.get("NOTES_REMINDER_STATE_DIR")
+    or os.environ.get("AUTORUN_STATE_DIR")
+    or Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "ai-notes"
+)
+
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
+CONFIG_FILE = CONFIG_HOME / "ai-notes" / "config.json"
+
+REMINDER = (
+    "Today's daily note has not been written to this session. If substantial "
+    "work landed — a fix that works, a commit or MR, a root cause, a decision — "
+    "record it now in the right project's file for today, and reconcile that "
+    "project's current/ rollup. If nothing substantial happened, say so in one "
+    "line and carry on; this is asked once per session, not per turn."
+)
+
+
+def notes_path():
+    """
+    Resolve where the notes live on this machine.
+
+    Args:
+        None
+
+    Returns:
+        pathlib.Path or None: the configured notes directory, or None when
+        nothing is configured or the config cannot be read. None means stay
+        quiet — a machine with no notes set up is not one to nag.
+
+    Raises:
+        None. Every failure resolves to None, because a hook that raises on a
+        malformed config would break every turn on that machine.
+    """
+
+    try:
+        configured = json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("notes_path")
+    except (OSError, ValueError):
+        return None
+
+    return Path(configured) if configured else None
+
+
+def written_today(notes):
+    """
+    Say whether any note for today has been written.
+
+    Args:
+        notes (pathlib.Path): the notes directory.
+
+    Returns:
+        bool: True when today's dated directory holds at least one file. False
+        when the directory is absent or empty.
+
+    Raises:
+        None. An unreadable directory counts as not written, which asks a
+        question that turns out to be unnecessary rather than skipping one that
+        was not.
+    """
+
+    day = notes / date.today().isoformat()
+
+    try:
+        return any(p.is_file() for p in day.iterdir())
+    except OSError:
+        return False
+
+
+def already_asked(session):
+    """
+    Say whether this session has been asked already, and record that it has.
+
+    Args:
+        session (str): the session identifier from the hook payload.
+
+    Returns:
+        bool: True when a marker for this session was already present. Creating
+        the marker is part of this call, so the caller cannot ask twice by
+        forgetting to record it.
+
+    Raises:
+        None. An unwritable state directory resolves to False — asking every
+        turn is worse than asking once, but far better than silence, which is
+        the failure this exists to fix.
+    """
+
+    marker = STATE_DIR / f"asked-{session}"
+
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+        if marker.exists():
+            return True
+
+        marker.touch()
+    except OSError:
+        return False
+
+    return False
+
+
+def main():
+    """
+    Decide whether to ask about today's notes, and say so on stdout.
+
+    Args:
+        None
+
+    Returns:
+        int: always 0. A hook that fails a turn over a note would be worse than
+        the problem it is solving.
+
+    Raises:
+        None
+    """
+
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        payload = {}
+
+    # Set when this hook already blocked once and the model is finishing up.
+    # Blocking again from here is how a Stop hook becomes an infinite loop.
+    if payload.get("stop_hook_active"):
+        return 0
+
+    notes = notes_path()
+
+    if notes is None or written_today(notes):
+        return 0
+
+    session = str(payload.get("session_id") or os.getppid())
+
+    if already_asked(session):
+        return 0
+
+    json.dump({"decision": "block", "reason": REMINDER}, sys.stdout)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
