@@ -308,10 +308,13 @@ def write_settings():
     """
     Write the deny-rules the unattended agent runs under.
 
-    These are a second line of defence, not the boundary. A permission rule is
-    enforced by the agent harness, so a shell command that reaches around it is
-    not stopped by anything here — the sandbox is what actually constrains the
-    process. Both are worth having.
+    Not merely a second line of defence. The sandbox restricts the filesystem,
+    so it covers a write to the shared home — but publishing is a network
+    action and the sandbox cannot see it at all. For anything that sends, these
+    rules are the only technical control there is.
+
+    They are enforced even under --dangerously-skip-permissions; that was
+    verified rather than assumed, because the whole design rests on it.
 
     Args:
         None
@@ -323,8 +326,21 @@ def write_settings():
         OSError: CONFIG_DIR is not writable.
     """
 
+    # Only what is true anywhere. Naming an employer's tooling here would put
+    # site-specific knowledge in a public repository — the site profile
+    # contributes its own commands instead, which is where such names belong.
     deny = ["Bash(git push --force*)", "Bash(git push -f*)"]
 
+    # A site knows which commands publish under the human's identity on its own
+    # systems. Those do not fail safely: they succeed, in that person's name,
+    # and cannot be quietly taken back. The sandbox cannot help — publishing is
+    # a network action, not a filesystem one — so this list is the only
+    # technical control over it.
+    deny += list(getattr(SITE, "DENY", []))
+
+    # Filesystem rules first: they are the ones a reader checks against the
+    # sandbox, and keeping them adjacent to it in the file makes the pairing
+    # obvious. The sandbox enforces this too; the rule states the intent.
     if READONLY:
         deny = [f"Write({READONLY}/**)", f"Edit({READONLY}/**)"] + deny
 
@@ -421,11 +437,30 @@ def install_shim():
 
     SHIM_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Which variables the role implies. The agent's own config directory is the
+    # one this command knows about; anything else is site knowledge, so a site
+    # profile supplies its own rather than this file naming another employer's
+    # tooling.
+    exports = {"CLAUDE_CONFIG_DIR": str(CONFIG_DIR)}
+    exports.update(getattr(SITE, "SHIM_ENV", {}))
+    shim_exports = "".join(f'export {k}="{v}"\n' for k, v in exports.items())
+
+    # The shim carries its own environment rather than inheriting one.
+    #
+    # A scheduled job is non-interactive, and ~/.bashrc returns early on those
+    # before any of this machine's settings are applied — so a cron or systemd
+    # launch would otherwise get the sandbox with the SHARED agent config, which
+    # is the one thing an unattended box must never write. Setting it here means
+    # the guarantee travels with the binary and holds however it is invoked,
+    # including by absolute path with an empty environment.
     SHIM.write_text(
         f"""#!/usr/bin/env bash
 # {SHIM_MARKER}. Runs the agent with the home tree read-only and only the
 # declared workspace writable. Remove with: autorun-mode off
-exec bwrap \\
+#
+# Safe to invoke by absolute path from cron, systemd, or any empty environment:
+# everything this machine's role implies is set below rather than inherited.
+{shim_exports}exec bwrap \\
     --dev-bind / / \\
     --ro-bind "{READONLY or HOME}" "{READONLY or HOME}" \\
     --bind "{WORKSPACE}" "{WORKSPACE}" \\
@@ -493,6 +528,10 @@ def cmd_on(args):
 
     if runtime:
         print(f"[+] sandbox shim: {SHIM} ({runtime})")
+        print(f"[!] schedule unattended jobs as this exact path — NOT bare `claude`:")
+        print(f"      {SHIM}")
+        print( "    PATH only carries the shim in an interactive shell; cron and systemd")
+        print( "    get neither it nor the agent config unless invoked this way.")
         print(f"[+] writable:     {WORKSPACE}")
         print(f"[+] read-only:    {READONLY or HOME}")
 
@@ -566,6 +605,9 @@ def cmd_status(args):
     print(f"      agent config: {CONFIG_DIR} ({'present' if CONFIG_DIR.is_dir() else 'absent'})")
     print(f"      sandbox:      {runtime or 'none available'}")
     print(f"      shim:         {SHIM if SHIM.is_file() else 'not installed'}")
+
+    if SHIM.is_file():
+        print(f"      launch jobs:  {SHIM}")
     print(f"      workspace rw: {WORKSPACE or '<unset>'}")
     print(f"      read-only:    {READONLY or '<unset>'}")
     print(f"      site profile: {SITE_DIR if SITE else 'none'}")

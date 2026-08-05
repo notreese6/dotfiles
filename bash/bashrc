@@ -70,21 +70,6 @@ export SHELL="${BASH:-/bin/bash}"
 export PATH
 
 
-# ---- Machine role ------------------------------------------
-# Is this an ordinary interactive box or a designated AUTORUN box?
-# The answer sets CLAUDE_CONFIG_DIR, P4CLIENT, and the prompt badge.
-# Written by `install.sh` and stored on local disk, so it does not
-# follow the shared NFS home to other machines.
-
-for __role_src in "${DOTFILES_DIR:-}/bash/machine-role.sh" \
-                  ~/Cloned/dotfiles/bash/machine-role.sh; do
-  if [ -z "${NV_MACHINE_ROLE:-}" ] && [ -f "$__role_src" ]; then
-    source "$__role_src"
-  fi
-done
-unset __role_src
-
-
 # ---- ls colors (cross-platform) ----------------------------
 # GNU ls (Linux) reads --color; BSD ls (macOS) reads CLICOLOR.
 
@@ -141,10 +126,31 @@ PROMPT_COMMAND='__make_prompt'
 # here and stays out of the public dotfiles repo. The repo's
 # .gitignore already excludes *.local files.
 #
-# NOT per-machine where $HOME is a shared network volume: ~ is one
-# NFS mount on every NVIDIA dev box, so this file is visible to all
-# of them. Anything that must differ per machine belongs in
+# NOT per-machine where $HOME is a shared network volume: one mount
+# serves every machine, so this file is visible to all of them.
+# Anything that must differ per machine belongs in
 # bash/machine-role.sh or under ~/.local/state, both of which sit on
 # local disk.
 
 [ -f ~/.bashrc.local ] && source ~/.bashrc.local
+
+
+# ---- Machine role ------------------------------------------
+# Is this an ordinary interactive box or a designated AUTORUN box?
+# The answer sets the agent's config directory, whatever environment
+# the site profile declares, and the prompt badge.
+# Written by `autorun-mode` and stored on local disk, so it does not
+# follow a shared network home to other machines.
+#
+# Sourced LAST, after ~/.bashrc.local, deliberately. Where $HOME is a
+# shared volume that file is not per-machine either — every box reads
+# one machine's values — so anything it sets about *this* machine has
+# to be corrected afterwards rather than before.
+
+for __role_src in "${DOTFILES_DIR:-}/bash/machine-role.sh" \
+                  ~/Cloned/dotfiles/bash/machine-role.sh; do
+  if [ -z "${NV_MACHINE_ROLE:-}" ] && [ -f "$__role_src" ]; then
+    source "$__role_src"
+  fi
+done
+unset __role_src
