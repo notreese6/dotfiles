@@ -2267,31 +2267,49 @@ def _append_to_target(target, assembled_text):
     _atomic_write(target, additive_text(existing, assembled_text))
 
 
-def skill_sources(base_dir):
+def skill_sources(*parents):
     """
-    List the skills this repo ships.
+    List the skills found under one or more parent directories.
+
+    Takes several parents because skills arrive from two places that cannot be
+    merged on disk: the shared repo, and the private layer, which lives outside
+    it and is never committed. Both are delivered the same way.
 
     Args:
-        base_dir (str or pathlib.Path): the `ai/` directory holding `skills/`.
+        *parents (str or pathlib.Path): directories that may hold a `skills/`
+            subdirectory. A parent of None or one that does not exist is
+            skipped, so an unconfigured private layer is simply no skills.
 
     Returns:
         list: [pathlib.Path] one directory per skill, sorted by name. A
         directory with no SKILL.md is not a skill and is skipped, so a
-        half-written one is ignored rather than linked into every agent.
+        half-written one is ignored rather than linked into every agent. When
+        two parents ship the same name the FIRST wins, since the caller passes
+        them in precedence order.
 
     Raises:
-        OSError: `skills/` exists but cannot be listed.
+        OSError: a `skills/` directory exists but cannot be listed.
     """
 
-    root = Path(base_dir) / SKILLS_DIRNAME
+    found = {}
 
-    if not root.is_dir():
-        return []
+    for parent in parents:
+        if parent is None:
+            continue
 
-    return sorted(p for p in root.iterdir() if (p / SKILL_ENTRY).is_file())
+        root = Path(parent) / SKILLS_DIRNAME
+
+        if not root.is_dir():
+            continue
+
+        for candidate in sorted(root.iterdir()):
+            if (candidate / SKILL_ENTRY).is_file():
+                found.setdefault(candidate.name, candidate)
+
+    return [found[name] for name in sorted(found)]
 
 
-def link_skills(agent, roots, base_dir):
+def link_skills(agent, roots, sources):
     """
     Point one agent's skills directory at the skills this repo ships.
 
@@ -2302,7 +2320,8 @@ def link_skills(agent, roots, base_dir):
     Args:
         agent (SupportedAgent): the agent whose directory to populate.
         roots (dict): {RulesRoot: pathlib.Path}. Must carry a HOME entry.
-        base_dir (str or pathlib.Path): the `ai/` directory holding `skills/`.
+        sources (list): [pathlib.Path] the skill directories to link, as
+            returned by skill_sources.
 
     Returns:
         tuple[list, list]: (linked, conflicts). `linked` holds the names now
@@ -2317,7 +2336,6 @@ def link_skills(agent, roots, base_dir):
     """
 
     destination = agent.skills_path(roots)
-    sources     = skill_sources(base_dir)
 
     if destination is None or not sources:
         return [], []
@@ -2470,8 +2488,13 @@ def apply_rules(base_dir):
     skills, conflicts = [], []
     roots             = rules_roots()
 
+    # The repo first, so a shared skill wins a name clash with a private one:
+    # the shared side is reviewed and travels, and silently shadowing it with
+    # something machine-local is the harder problem to notice.
+    sources = skill_sources(base, local_dir)
+
     for target in resolved.targets:
-        agent_skills, agent_conflicts = link_skills(target.agent, roots, base)
+        agent_skills, agent_conflicts = link_skills(target.agent, roots, sources)
         skills.extend(n for n in agent_skills if n not in skills)
         conflicts.extend(agent_conflicts)
 

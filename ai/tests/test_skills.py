@@ -77,7 +77,7 @@ class TestSkillDelivery(SandboxedTestCase):
         return self.claude.skills_path(self.roots)
 
     def test_a_shipped_skill_is_linked_not_copied(self):
-        linked, conflicts = airules.link_skills(self.claude, self.roots, self.ai)
+        linked, conflicts = airules.link_skills(self.claude, self.roots, airules.skill_sources(self.ai))
 
         self.assertEqual(linked, ["demo-skill"])
         self.assertEqual(conflicts, [])
@@ -89,7 +89,7 @@ class TestSkillDelivery(SandboxedTestCase):
     def test_a_directory_without_a_skill_file_is_not_a_skill(self):
         (self.ai / "skills" / "half-written").mkdir(parents=True)
 
-        linked, _ = airules.link_skills(self.claude, self.roots, self.ai)
+        linked, _ = airules.link_skills(self.claude, self.roots, airules.skill_sources(self.ai))
 
         # Linking one mid-write would put a broken skill in front of every agent.
         self.assertNotIn("half-written", linked)
@@ -99,7 +99,7 @@ class TestSkillDelivery(SandboxedTestCase):
         theirs.mkdir(parents=True)
         (theirs / "SKILL.md").write_text("mine\n", encoding="utf-8")
 
-        airules.link_skills(self.claude, self.roots, self.ai)
+        airules.link_skills(self.claude, self.roots, airules.skill_sources(self.ai))
 
         # A working machine has over a hundred of these. Managing only the names
         # this repo ships is what makes the whole thing safe to run.
@@ -110,15 +110,15 @@ class TestSkillDelivery(SandboxedTestCase):
         taken.mkdir(parents=True)
         (taken / "SKILL.md").write_text("NOT OURS\n", encoding="utf-8")
 
-        linked, conflicts = airules.link_skills(self.claude, self.roots, self.ai)
+        linked, conflicts = airules.link_skills(self.claude, self.roots, airules.skill_sources(self.ai))
 
         self.assertEqual([name for name, _ in conflicts], ["demo-skill"])
         self.assertNotIn("demo-skill", linked)
         self.assertEqual((taken / "SKILL.md").read_text(encoding="utf-8"), "NOT OURS\n")
 
     def test_running_twice_changes_nothing(self):
-        first, _  = airules.link_skills(self.claude, self.roots, self.ai)
-        second, _ = airules.link_skills(self.claude, self.roots, self.ai)
+        first, _  = airules.link_skills(self.claude, self.roots, airules.skill_sources(self.ai))
+        second, _ = airules.link_skills(self.claude, self.roots, airules.skill_sources(self.ai))
 
         self.assertEqual(first, second)
         self.assertTrue((self.agent_dir() / "demo-skill").is_symlink())
@@ -129,7 +129,7 @@ class TestSkillDelivery(SandboxedTestCase):
         self.agent_dir().mkdir(parents=True, exist_ok=True)
         (self.agent_dir() / "demo-skill").symlink_to(elsewhere, target_is_directory=True)
 
-        linked, conflicts = airules.link_skills(self.claude, self.roots, self.ai)
+        linked, conflicts = airules.link_skills(self.claude, self.roots, airules.skill_sources(self.ai))
 
         # The repo moving is ordinary. Treating an outdated link of our own as
         # someone else's file would strand every agent on the old location.
@@ -142,7 +142,39 @@ class TestSkillDelivery(SandboxedTestCase):
         agent = airules.SupportedAgent(name="paper", root=airules.RulesRoot.HOME,
                                        relpath=("notes.txt",))
 
-        self.assertEqual(airules.link_skills(agent, self.roots, self.ai), ([], []))
+        self.assertEqual(airules.link_skills(agent, self.roots, airules.skill_sources(self.ai)), ([], []))
+
+    def test_the_private_layer_ships_skills_too(self):
+        private = self.home / "private" / "skills" / "local-only"
+        private.mkdir(parents=True)
+        (private / "SKILL.md").write_text("---\nname: local-only\ndescription: p\n---\n",
+                                          encoding="utf-8")
+
+        sources   = airules.skill_sources(self.ai, self.home / "private")
+        linked, _ = airules.link_skills(self.claude, self.roots, sources)
+
+        # The private layer lives outside the repo and is never committed, so its
+        # skills cannot be merged on disk — they have to be collected separately
+        # and delivered the same way.
+        self.assertEqual(linked, ["demo-skill", "local-only"])
+
+    def test_the_shared_repo_wins_a_name_clash_with_the_private_layer(self):
+        private = self.home / "private" / "skills" / "demo-skill"
+        private.mkdir(parents=True)
+        (private / "SKILL.md").write_text("SHADOW\n", encoding="utf-8")
+
+        sources = airules.skill_sources(self.ai, self.home / "private")
+
+        # Shadowing a reviewed, travelling skill with something machine-local is
+        # the harder failure to notice, so precedence follows argument order and
+        # the repo is passed first.
+        self.assertEqual([s.parent.parent for s in sources], [self.ai])
+
+    def test_an_absent_private_layer_is_simply_no_skills(self):
+        self.assertEqual(airules.skill_sources(self.ai, None),
+                         airules.skill_sources(self.ai))
+        self.assertEqual(airules.skill_sources(self.ai, self.home / "nope"),
+                         airules.skill_sources(self.ai))
 
     def test_cursor_takes_skills_from_home_though_its_rules_do_not(self):
         cursor = airules.SUPPORTED_AGENTS["cursor"]
