@@ -39,11 +39,14 @@ osc52() {
     # suppressing them — the sequence must be a single unbroken line.
     payload=$(base64 | tr -d '\n')
 
-    if [ -w /dev/tty ]; then
-        printf '\033]52;c;%s\007' "$payload" > /dev/tty
-    else
+    # Try the write and fall back on failure, rather than testing `-w /dev/tty`
+    # first. That test asks whether the device node is writable, which it is for
+    # everyone, and says nothing about whether THIS process has a controlling
+    # terminal — so under tmux copy-pipe it passed and the write then failed with
+    # ENXIO, sending the sequence nowhere at all. A copy that reports success and
+    # produces a stale paste is the exact failure this file exists to avoid.
+    printf '\033]52;c;%s\007' "$payload" 2>/dev/null > /dev/tty ||
         printf '\033]52;c;%s\007' "$payload"
-    fi
 }
 
 # Over SSH the clipboard worth writing to belongs to whichever machine is running
