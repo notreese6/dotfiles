@@ -766,6 +766,8 @@ def main():
         ValueError: the config file is not valid JSON.
     """
 
+    airules.order_output()
+
     parser = build_parser()
     args   = parser.parse_args()
 

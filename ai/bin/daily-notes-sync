@@ -434,6 +434,8 @@ def main():
         ValueError: the config file is not valid JSON.
     """
 
+    airules.order_output()
+
     args = build_parser().parse_args()
 
     return args.run(args)

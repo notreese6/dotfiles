@@ -254,6 +254,8 @@ def main():
         UnicodeDecodeError: a rules file is not valid UTF-8.
     """
 
+    airules.order_output()
+
     parser = build_parser()
     args   = parser.parse_args()
 

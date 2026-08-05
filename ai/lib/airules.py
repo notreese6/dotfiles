@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from pathlib import Path
@@ -59,6 +60,11 @@ RULES_GLOB    = "*.md"
 # Rules are pushed — always present, whatever the task. A skill is pulled, loaded
 # only when the agent judges its description relevant. Anything that must apply
 # without being asked for belongs in a rules module, not here.
+# How an agent's hooks file is shaped. Claude and Codex wrap handlers in a
+# matcher group; Cursor lists commands directly under the event.
+HOOKS_NESTED = "nested"
+HOOKS_FLAT   = "flat"
+
 SKILLS_DIRNAME  = "skills"
 SKILL_ENTRY     = "SKILL.md"
 
@@ -245,6 +251,57 @@ class SupportedAgent:
     relpath:            Tuple[str, ...]
     needs_manual_paste: bool = False
     skills_relpath:     Tuple[str, ...] = ()
+    hooks_relpath:      Tuple[str, ...] = ()
+    hooks_schema:       str = ""
+    hooks_seed:         Tuple[Tuple[str, object], ...] = ()
+    hook_events:        Tuple[Tuple[str, str], ...] = ()
+
+    def hooks_path(self, roots):
+        """
+        Resolve the file this agent keeps its hooks in.
+
+        Under HOME like `skills_path`, and for the same reason: an agent may read
+        its rules from somewhere else entirely and still keep hooks on disk with
+        the others.
+
+        Args:
+            roots (dict): {RulesRoot: pathlib.Path}. Must carry a HOME entry.
+
+        Returns:
+            pathlib.Path or None: the file, or None for an agent with no hook
+            support. Not guaranteed to exist.
+
+        Raises:
+            KeyError: `roots` carries no HOME entry.
+        """
+
+        if not self.hooks_relpath:
+            return None
+
+        return roots[RulesRoot.HOME].joinpath(*self.hooks_relpath)
+
+    def native_event(self, canonical):
+        """
+        Translate a canonical event name into this agent's own.
+
+        Agents name the same moment differently — Claude and Codex say
+        `UserPromptSubmit`, Cursor says `beforeSubmitPrompt`. Callers describe a
+        hook once, in canonical terms, and each agent translates. Adding an agent
+        is then a row in this table rather than a branch at every call site.
+
+        Args:
+            canonical (str): the event as this system names it, e.g.
+                "prompt_submit".
+
+        Returns:
+            str: this agent's name for it, or "" when it has no equivalent — in
+            which case the hook is simply not wired there.
+
+        Raises:
+            None
+        """
+
+        return dict(self.hook_events).get(canonical, "")
 
     def skills_path(self, roots):
         """
@@ -304,12 +361,20 @@ SUPPORTED_AGENTS = {
     agent.name: agent
     for agent in (
         SupportedAgent(name="claude", root=RulesRoot.HOME,       relpath=(".claude", "CLAUDE.md"),
-                       skills_relpath=(".claude", "skills")),
+                       skills_relpath=(".claude", "skills"),
+                       hooks_relpath=(".claude", "settings.json"), hooks_schema=HOOKS_NESTED,
+                       hook_events=(("prompt_submit", "UserPromptSubmit"), ("stop", "Stop"))),
         SupportedAgent(name="codex",  root=RulesRoot.HOME,       relpath=(".codex",  "AGENTS.md"),
-                       skills_relpath=(".codex",  "skills")),
+                       skills_relpath=(".codex",  "skills"),
+                       hooks_relpath=(".codex", "hooks.json"), hooks_schema=HOOKS_NESTED,
+                       hook_events=(("prompt_submit", "UserPromptSubmit"), ("stop", "Stop"))),
         SupportedAgent(name="cursor", root=RulesRoot.CONFIG_DIR, relpath=("cursor-user-rules.txt",),
                        needs_manual_paste=True,
-                       skills_relpath=(".cursor", "skills")),
+                       skills_relpath=(".cursor", "skills"),
+                       hooks_relpath=(".cursor", "hooks.json"), hooks_schema=HOOKS_FLAT,
+                       # Cursor rejects a hooks file with no version.
+                       hooks_seed=(("version", 1),),
+                       hook_events=(("prompt_submit", "beforeSubmitPrompt"), ("stop", "stop"))),
     )
 }
 
@@ -610,6 +675,40 @@ def default_local_rules_dir():
     """
 
     return config_path().parent.parent / LOCAL_RULES_RELPATH
+
+
+def order_output():
+    """
+    Make this process's stdout and stderr arrive in the order they were written.
+
+    Python block-buffers stdout when it is not a terminal but never buffers
+    stderr, so a tool that writes to both emits them interleaved wrongly the
+    moment anyone pipes it, redirects it, or reads it from a script: every `[-]`
+    line appears above the `[*]` lines it belongs beneath. The report then reads
+    back-to-front for exactly the audience least able to tell.
+
+    Fixed by making stdout line-buffered rather than by flushing at each call
+    site. Remembering to flush is a thing to forget, and it has been forgotten
+    three separate times in this repo — in `daily-notes-sync status`, in
+    `repo-scan`, and again in `ai-hooks`.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        None. A stream that cannot be reconfigured (already closed, or replaced
+        with something that is not a TextIOWrapper, as a test harness may do) is
+        left as it is — output ordering is not worth failing a run over.
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError):
+            pass
 
 
 def assembled_path():

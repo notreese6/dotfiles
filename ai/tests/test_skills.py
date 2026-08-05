@@ -186,5 +186,46 @@ class TestSkillDelivery(SandboxedTestCase):
         self.assertEqual(cursor.skills_path(self.roots), self.home / ".cursor" / "skills")
 
 
+class TestOneAgentTable(SandboxedTestCase):
+    """
+    Covers the single agent definition every tool reads.
+    """
+
+    def test_every_agent_is_described_in_exactly_one_place(self):
+        for agent in airules.SUPPORTED_AGENTS.values():
+            # Rules, skills and hooks for one agent all come off one record. A
+            # second table somewhere else is how they drift when one moves.
+            self.assertTrue(agent.relpath)
+            self.assertTrue(agent.skills_relpath)
+            self.assertTrue(agent.hooks_relpath)
+
+    def test_each_agent_translates_the_canonical_event_names(self):
+        for agent in airules.SUPPORTED_AGENTS.values():
+            for canonical in ("prompt_submit", "stop"):
+                self.assertTrue(agent.native_event(canonical),
+                                f"{agent.name} has no name for {canonical}")
+
+    def test_an_unknown_event_is_empty_rather_than_an_error(self):
+        agent = airules.SUPPORTED_AGENTS["claude"]
+
+        # An agent with no equivalent for an event simply does not get that hook
+        # wired, which must not be a crash for every other agent in the run.
+        self.assertEqual(agent.native_event("no-such-event"), "")
+
+    def test_adding_an_agent_needs_no_change_outside_the_table(self):
+        added = airules.SupportedAgent(
+            name="probe", root=airules.RulesRoot.HOME, relpath=("probe.md",),
+            skills_relpath=(".probe", "skills"),
+            hooks_relpath=(".probe", "hooks.json"), hooks_schema=airules.HOOKS_FLAT,
+            hook_events=(("stop", "onStop"),))
+
+        # Everything a caller needs comes off the record itself, so a new agent
+        # is a row rather than a branch in each tool.
+        roots = {airules.RulesRoot.HOME: self.home, airules.RulesRoot.CONFIG_DIR: self.xdg}
+        self.assertEqual(added.hooks_path(roots), self.home / ".probe" / "hooks.json")
+        self.assertEqual(added.skills_path(roots), self.home / ".probe" / "skills")
+        self.assertEqual(added.native_event("stop"), "onStop")
+
+
 if __name__ == "__main__":
     unittest.main()

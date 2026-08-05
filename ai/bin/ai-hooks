@@ -22,13 +22,13 @@ described once in AGENTS below rather than special-cased at every call site.
 
 import argparse
 import json
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
 
-HOME      = Path.home()
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 
 
@@ -39,9 +39,9 @@ class HookSpec:
 
     Args:
         script (str): file name under `ai/hooks/`.
-        event (str): the event name Claude and Codex use.
-        cursor_event (str): Cursor's name for the same moment. Empty when Cursor
-            has no equivalent, in which case it is not wired there.
+        event (str): the canonical event name. Each agent translates it into
+            its own vocabulary via SupportedAgent.native_event, so a hook is
+            described once rather than once per agent.
         status (str): the one-line status message an agent may display.
         needs_format (bool): True when the script must be told which output
             shape to emit, because agents disagree on how a hook returns text.
@@ -55,68 +55,39 @@ class HookSpec:
 
     script:       str
     event:        str
-    cursor_event: str
     status:       str
     needs_format: bool = False
 
 
 HOOKS = (
-    HookSpec(script="date-context", event="UserPromptSubmit",
-             cursor_event="beforeSubmitPrompt", status="Checking current date",
-             needs_format=True),
-    HookSpec(script="notes-reminder", event="Stop",
-             cursor_event="stop", status="Checking daily notes"),
+    HookSpec(script="date-context", event="prompt_submit",
+             status="Checking current date", needs_format=True),
+    HookSpec(script="notes-reminder", event="stop",
+             status="Checking daily notes"),
 )
 
 
-@dataclass(frozen=True)
-class AgentSpec:
+def agents():
     """
-    Where one agent keeps its hooks, and in what shape.
+    List the agents that can carry hooks.
+
+    Reads the one agent table in airules rather than keeping a second. That table
+    already knows where each agent's rules and skills go; a private copy here is
+    how the three drift apart when one of them moves.
 
     Args:
-        name (str): the agent name, matching the `agents` config setting.
-        relpath (Tuple[str, ...]): path parts under HOME to its hooks file.
-        schema (str): "nested" for Claude and Codex, which wrap handlers in a
-            matcher group; "flat" for Cursor, which lists commands directly.
-        seed (dict): keys a newly created file must carry. Cursor rejects a
-            hooks file with no `version`.
+        None
 
     Returns:
-        None
+        list: [airules.SupportedAgent] every agent declaring a hooks file, in
+        table order. An agent with no hook support is skipped rather than
+        special-cased by name.
 
     Raises:
         None
     """
 
-    name:    str
-    relpath: Tuple[str, ...]
-    schema:  str
-    seed:    Tuple[Tuple[str, object], ...] = ()
-
-    def path(self):
-        """
-        Resolve this agent's hooks file.
-
-        Args:
-            None
-
-        Returns:
-            pathlib.Path: the file, which may not exist yet.
-
-        Raises:
-            None
-        """
-
-        return HOME.joinpath(*self.relpath)
-
-
-AGENTS = (
-    AgentSpec(name="claude", relpath=(".claude", "settings.json"), schema="nested"),
-    AgentSpec(name="codex",  relpath=(".codex",  "hooks.json"),    schema="nested"),
-    AgentSpec(name="cursor", relpath=(".cursor", "hooks.json"),    schema="flat",
-              seed=(("version", 1),)),
-)
+    return [a for a in airules.SUPPORTED_AGENTS.values() if a.hooks_relpath]
 
 
 def command_for(hook, agent):
@@ -125,7 +96,7 @@ def command_for(hook, agent):
 
     Args:
         hook (HookSpec): the hook.
-        agent (AgentSpec): the agent that will run it.
+        agent (airules.SupportedAgent): the agent that will run it.
 
     Returns:
         str: an absolute command. Absolute because a hook runs with whatever
@@ -150,7 +121,7 @@ def entry_for(hook, agent):
 
     Args:
         hook (HookSpec): the hook.
-        agent (AgentSpec): the agent whose schema to follow.
+        agent (airules.SupportedAgent): the agent whose schema to follow.
 
     Returns:
         dict: the entry to place under the event name.
@@ -161,7 +132,7 @@ def entry_for(hook, agent):
 
     command = command_for(hook, agent)
 
-    if agent.schema == "flat":
+    if agent.hooks_schema == airules.HOOKS_FLAT:
         return {"command": command}
 
     return {"hooks": [{"type": "command", "command": command,
@@ -227,7 +198,7 @@ def install_into(agent, dry_run=False):
     Wire every shipped hook into one agent.
 
     Args:
-        agent (AgentSpec): the agent to wire.
+        agent (airules.SupportedAgent): the agent to wire.
         dry_run (bool): True reports what would change and writes nothing.
 
     Returns:
@@ -241,16 +212,16 @@ def install_into(agent, dry_run=False):
         ValueError: the existing file is not valid JSON.
     """
 
-    path     = agent.path()
+    path     = agent.hooks_path(airules.rules_roots())
     data     = load(path)
     hooks    = data.setdefault("hooks", {})
     added, already, conflicts = [], [], []
 
-    for key, value in agent.seed:
+    for key, value in agent.hooks_seed:
         data.setdefault(key, value)
 
     for hook in HOOKS:
-        event = hook.cursor_event if agent.schema == "flat" else hook.event
+        event = agent.native_event(hook.event)
 
         if not event:
             continue
@@ -298,28 +269,21 @@ def run_install(args):
 
     blocked = False
 
-    for agent in AGENTS:
+    for agent in agents():
         try:
             added, already, conflicts = install_into(agent, args.dry_run)
         except ValueError as exc:
-            print(f"[-] {agent.name}: {agent.path()} is not valid JSON ({exc}) — left alone",
+            print(f"[-] {agent.name}: {agent.hooks_path(airules.rules_roots())} is not valid JSON ({exc}) — left alone",
                   file=sys.stderr)
             blocked = True
             continue
 
         verb = "would wire" if args.dry_run else "wired"
 
-        # stdout block-buffers when it is not a tty and stderr never does, so
-        # without this every conflict prints above the lines it belongs beside.
-        # Third time this has bitten in this repo.
-        sys.stdout.flush()
-
         for name in added:
             print(f"[+] {agent.name}: {verb} {name}")
         for name in already:
             print(f"[*] {agent.name}: {name} already wired")
-        sys.stdout.flush()
-
         for name, event in conflicts:
             print(f"[-] {agent.name}: {event} already runs something else — {name} not wired",
                   file=sys.stderr)
@@ -345,8 +309,8 @@ def run_status(args):
         None. An unreadable or malformed file is reported in place.
     """
 
-    for agent in AGENTS:
-        path = agent.path()
+    for agent in agents():
+        path = agent.hooks_path(airules.rules_roots())
 
         if not path.is_file():
             print(f"[*] {agent.name}: no hooks file at {path}")
@@ -359,7 +323,7 @@ def run_status(args):
             continue
 
         for hook in HOOKS:
-            event    = hook.cursor_event if agent.schema == "flat" else hook.event
+            event    = agent.native_event(hook.event)
             existing = commands_in(hooks.get(event))
             ours     = command_for(hook, agent)
 
@@ -421,6 +385,8 @@ def main():
         SystemExit: the arguments are invalid or --help was requested.
         OSError: a file cannot be written.
     """
+
+    airules.order_output()
 
     args = build_parser().parse_args()
 
