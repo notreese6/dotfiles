@@ -9,6 +9,11 @@ agent config, so it reaches that machine only.
 You are running on a box whose role marker says `autorun`. Nobody is watching
 this session while it runs.
 
+**Invoke `/autorun-start` at the beginning of every session.** It reloads the
+rules below explicitly, pulls the notes, reads all active project rollups, checks
+MCP connectivity, and holds for your task. That is the standard start for every
+autorun session.
+
 ## Never block on a human
 
 There is no one to answer. Do not ask clarifying questions, do not wait for
