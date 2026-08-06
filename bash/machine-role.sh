@@ -31,19 +31,12 @@ NV_SITE_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/autorun-mode/site/site.env"
 #     None
 nv_state_dir() {
 
-    local dir="${AUTORUN_STATE_DIR:-}"
-
-    # Sourced in a subshell so the site's variables never leak into the
-    # interactive environment; only the resolved path comes back.
-    if [ -z "$dir" ] && [ -r "$NV_SITE_ENV" ]; then
-        dir=$( . "$NV_SITE_ENV" >/dev/null 2>&1; echo "${AUTORUN_STATE_DIR:-}" )
-    fi
-
-    if [ -n "$dir" ]; then
-        echo "$dir"
-    else
-        echo "${XDG_STATE_HOME:-$HOME/.local/state}/autorun-mode"
-    fi
+    # One override, then the XDG default. The site lookup that used to sit here
+    # existed because the home was a network volume shared by two machines, so
+    # "somewhere under ~" set the role for both at once and only the site knew
+    # which local path was right. The home is local disk now, so the plain
+    # answer is the correct one.
+    echo "${AUTORUN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autorun-mode}"
 }
 
 # Read this machine's role.

@@ -153,7 +153,6 @@ READONLY  = os.environ.get("AUTORUN_READONLY")  or getattr(SITE, "READONLY",  ""
 # home directory having been rearranged first.
 STATE_DIR = Path(
     os.environ.get("AUTORUN_STATE_DIR")
-    or getattr(SITE, "STATE_DIR", "")
     or Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "autorun-mode"
 )
 
@@ -223,46 +222,6 @@ def sandbox_runtime():
             pass
 
     return ""
-
-
-def dangling_links():
-    """
-    Find symlinks in the home directory whose targets do not exist.
-
-    On a machine whose home is shared but whose local disk is not, every symlink
-    pointing off the shared volume arrives already present and already broken.
-    Deriving the list from the links themselves means a new link never has to be
-    added to a hardcoded list here.
-
-    Args:
-        None
-
-    Returns:
-        list[tuple[pathlib.Path, pathlib.Path]]: (link, target) pairs, target
-        resolved to an absolute path. Empty when nothing is broken.
-
-    Raises:
-        None
-    """
-
-    broken = []
-
-    # Depth 2 covers ~/.claude/projects and friends without walking the whole
-    # tree, which on a network home is slow enough to notice.
-    candidates = list(HOME.glob("*")) + list(HOME.glob("*/*"))
-
-    for link in candidates:
-        if not link.is_symlink():
-            continue
-
-        target = Path(os.path.realpath(link))
-
-        # Only targets off the home volume are ours to create; a broken link
-        # inside the home directory is somebody else's bug.
-        if not target.exists() and not str(target).startswith(str(HOME) + os.sep):
-            broken.append((link, target))
-
-    return broken
 
 
 def write_claude_md():
@@ -598,7 +557,6 @@ def cmd_status(args):
 
     role    = current_role()
     runtime = sandbox_runtime()
-    broken  = dangling_links()
 
     print(f"[*] machine role: {role}")
     print(f"      state dir:    {STATE_DIR}")
@@ -611,9 +569,6 @@ def cmd_status(args):
     print(f"      workspace rw: {WORKSPACE or '<unset>'}")
     print(f"      read-only:    {READONLY or '<unset>'}")
     print(f"      site profile: {SITE_DIR if SITE else 'none'}")
-
-    if broken:
-        print(f"[-] {len(broken)} dangling home symlink(s) — this machine's local disk\n    layout is incomplete; fix it with your home-layout tool, not this one")
 
     if SITE and hasattr(SITE, "status"):
         SITE.status()

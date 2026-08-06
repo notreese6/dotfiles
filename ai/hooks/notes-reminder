@@ -32,12 +32,12 @@ from pathlib import Path
 
 HOME = Path.home()
 
-# Same resolution order as autorun-mode: an explicit override, then the site
-# profile, then XDG. On a machine whose home is a shared network volume,
-# "somewhere under ~" is the wrong answer and only the site knows the right one.
+# One override, then XDG. These are session markers and nothing more, so the
+# plain location is right; the AUTORUN_STATE_DIR fallback that used to sit here
+# only existed to follow the role marker onto local disk when the home was a
+# shared network volume.
 STATE_DIR = Path(
     os.environ.get("NOTES_REMINDER_STATE_DIR")
-    or os.environ.get("AUTORUN_STATE_DIR")
     or Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "ai-notes"
 )
 
