@@ -196,6 +196,10 @@ class ExitStatus(IntEnum):
             commands with it.
         NOT_A_REPO: the notes directory is not a git repository. Nothing was
             created — making a repo out of someone's work is their decision.
+        MCP_DRIFT: the live MCP servers diverge from the source-of-truth file.
+            Nothing was changed; the report is the product.
+        MCP_BAD_SOURCE: the MCP source file is absent, unreadable, or not in
+            the grouped shape, so there is nothing trustworthy to sync from.
     """
 
     OK                 = 0
@@ -207,6 +211,8 @@ class ExitStatus(IntEnum):
     SYNC_CONFLICT      = 8
     SYNC_LOCKED        = 9
     NOT_A_REPO         = 10
+    MCP_DRIFT          = 11
+    MCP_BAD_SOURCE     = 12
 
 
 class RulesRoot(Enum):

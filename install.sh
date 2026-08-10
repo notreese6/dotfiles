@@ -290,7 +290,7 @@ describes_target() {
     tmux) echo "replace your tmux config with this repo's" ;;
     vim)  echo "replace your vim config with this repo's" ;;
     bash) echo "replace your bash config with this repo's" ;;
-    ai)   echo "install five commands into ~/.local/bin" ;;
+    ai)   echo "install six commands into ~/.local/bin" ;;
     *)    echo "$1" ;;
   esac
 }
@@ -316,6 +316,7 @@ ai-rules, ai-setup  build the rules your AI agents read
 ai-hooks            wire the date and daily-notes hooks into each agent
 daily-notes-sync    keep your daily notes in step across machines
 autorun-mode        mark a machine as running agents unattended
+mcp-sync            keep the agents' MCP servers in step with your own file
 
 then asks its own questions and, for each agent you name:
   - points its rules file at the assembled rules (it asks first, and backs
@@ -516,6 +517,7 @@ links_for() {
       echo "$DOTFILES_DIR/ai/bin/ai-hooks|$HOME/.local/bin/ai-hooks"
       echo "$DOTFILES_DIR/ai/bin/daily-notes-sync|$HOME/.local/bin/daily-notes-sync"
       echo "$DOTFILES_DIR/ai/bin/autorun-mode|$HOME/.local/bin/autorun-mode"
+      echo "$DOTFILES_DIR/ai/bin/mcp-sync|$HOME/.local/bin/mcp-sync"
       ;;
   esac
 }

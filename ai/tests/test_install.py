@@ -534,7 +534,7 @@ class TestInstallAiTarget(SandboxedTestCase):
         # tooling" is not something a reader can decide on. Asserted by naming
         # the commands rather than counting them — the count changed the first
         # time a fifth was added and broke this test for no reason.
-        for command in ("ai-rules", "ai-setup", "daily-notes-sync", "ai-hooks"):
+        for command in ("ai-rules", "ai-setup", "daily-notes-sync", "ai-hooks", "mcp-sync"):
             self.assertIn(command, out)
 
     def test_personal_targets_are_off_unless_asked_for(self):

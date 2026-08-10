@@ -129,7 +129,7 @@ reports what it would change under `--dry-run`.
 | `tmux` | tmux.conf, dev-layout.sh, clip.sh, TPM |
 | `vim` | vimrc |
 | `bash` | bashrc, bash_profile, osc52-shim |
-| `ai` | ai-rules, ai-setup, ai-hooks, daily-notes-sync, autorun-mode; then runs ai-setup and ai-hooks |
+| `ai` | ai-rules, ai-setup, ai-hooks, daily-notes-sync, autorun-mode, mcp-sync; then runs ai-setup and ai-hooks |
 
 Three delivery mechanisms, chosen by what the artifact is:
 

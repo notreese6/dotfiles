@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""
+Keep the live MCP servers in step with the source-of-truth file.
+
+Claude Code owns ~/.claude.json outright: it rewrites the file constantly and
+recreates it wholesale on an account switch, taking hand-edited server
+definitions with it. So the definitions live in a file the USER owns, and this
+tool moves them into the live config deliberately — never the other way around
+by accident.
+
+The source file is grouped, because JSON carries no comments and the grouping
+is the documentation:
+
+    {
+      "always-have": { "gitlab":  { "type": "http", "url": "..." } },
+      "ci-cd":       { "jenkins": { "type": "http", "url": "..." } }
+    }
+
+Group names are the user's own; this tool never hardcodes a taxonomy. Flattened
+in file order on apply, so the layout of the source file IS the order agents
+list the servers in.
+
+Three verbs:
+
+    status    report every way live and source disagree. Changes nothing.
+    apply     make live match source. Unmanaged live entries survive, named.
+    adopt     copy one unmanaged live entry into a source group, so additions
+              made in a hurry become managed instead of rotting.
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+
+
+def source_path():
+    """
+    Locate the source-of-truth file.
+
+    Args:
+        None
+
+    Returns:
+        pathlib.Path: $MCP_SYNC_SOURCE when set (tests point it at a sandbox),
+        otherwise mcp-servers.json beside the tool config. Not guaranteed to
+        exist.
+
+    Raises:
+        None
+    """
+
+    override = os.environ.get("MCP_SYNC_SOURCE")
+
+    return Path(override) if override else airules.config_path().parent / "mcp-servers.json"
+
+
+def target_path():
+    """
+    Locate the live config the agent actually reads.
+
+    Args:
+        None
+
+    Returns:
+        pathlib.Path: $MCP_SYNC_TARGET when set (tests point it at a sandbox),
+        otherwise ~/.claude.json. Not guaranteed to exist.
+
+    Raises:
+        None
+    """
+
+    override = os.environ.get("MCP_SYNC_TARGET")
+
+    return Path(override) if override else Path.home() / ".claude.json"
+
+
+def load_source(path):
+    """
+    Read and validate the grouped source file.
+
+    Args:
+        path (pathlib.Path): the source file.
+
+    Returns:
+        dict: {group: {name: definition}} exactly as stored, insertion order
+        preserved.
+
+    Raises:
+        SourceError: the file is absent, unparseable, flat rather than grouped,
+            holds a definition that is not a mapping, or names one server in
+            two groups. Raised rather than repaired: a source of truth that
+            needs guessing about is not one.
+    """
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise SourceError(f"cannot read {path}: {error}")
+    except ValueError as error:
+        raise SourceError(f"{path} is not valid JSON: {error}")
+
+    if not isinstance(data, dict):
+        raise SourceError(f"{path} must hold an object of groups")
+
+    seen = {}
+
+    for group, members in data.items():
+        if not isinstance(members, dict):
+            raise SourceError(f"group {group!r} must hold an object of servers")
+
+        # A value with a url or command IS a server definition, which means the
+        # file is flat, not grouped. Said explicitly, because the fix is a
+        # one-time regrouping of the file rather than anything in this tool.
+        if "url" in members or "command" in members:
+            raise SourceError(
+                f"{path} looks flat: {group!r} is a server definition, not a group. "
+                "Wrap the definitions in groups (see the tool docstring).")
+
+        for name, definition in members.items():
+            if not isinstance(definition, dict):
+                raise SourceError(f"{group}/{name} is not an object")
+
+            if name in seen:
+                raise SourceError(
+                    f"{name!r} appears in both {seen[name]!r} and {group!r} — one server, one home")
+
+            seen[name] = group
+
+    return data
+
+
+def flatten(groups):
+    """
+    Collapse the grouped source into the flat dict the live config wants.
+
+    Args:
+        groups (dict): {group: {name: definition}} from load_source.
+
+    Returns:
+        dict: {name: definition} in file order — group by group, each group's
+        members in their stored order. This order is the whole point: it is
+        what apply pushes into the live config.
+
+    Raises:
+        None
+    """
+
+    flat = {}
+
+    for members in groups.values():
+        flat.update(members)
+
+    return flat
+
+
+def load_live(path):
+    """
+    Read the live config, tolerating absence.
+
+    Args:
+        path (pathlib.Path): the live config file.
+
+    Returns:
+        tuple: (config, servers) — the whole parsed file and its mcpServers
+        mapping. ({}, {}) when the file is absent, so a fresh machine syncs
+        into an empty config rather than failing.
+
+    Raises:
+        SourceError: the file exists but cannot be parsed. Overwriting a file
+            that no longer parses would destroy whatever it still holds.
+    """
+
+    if not path.is_file():
+        return {}, {}
+
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise SourceError(f"cannot read {path}: {error}")
+
+    servers = config.get("mcpServers")
+
+    return config, servers if isinstance(servers, dict) else {}
+
+
+class SourceError(Exception):
+    """
+    A source or live file this tool refuses to work from.
+    """
+
+
+def compare(groups, live):
+    """
+    Work out every way the live servers diverge from the source.
+
+    Args:
+        groups (dict): the grouped source, from load_source.
+        live (dict): the live mcpServers mapping.
+
+    Returns:
+        dict: four lists under fixed keys —
+            "missing":   names in source but not live,
+            "drifted":   names in both whose definitions differ,
+            "unmanaged": live names the source does not know,
+            "disordered" (bool): live order differs from source order for the
+                names they share.
+
+    Raises:
+        None
+    """
+
+    wanted = flatten(groups)
+
+    missing   = [n for n in wanted if n not in live]
+    drifted   = [n for n in wanted if n in live and live[n] != wanted[n]]
+    unmanaged = [n for n in live if n not in wanted]
+
+    shared     = [n for n in wanted if n in live]
+    live_order = [n for n in live if n in wanted]
+
+    return {
+        "missing":    missing,
+        "drifted":    drifted,
+        "unmanaged":  unmanaged,
+        "disordered": shared != live_order,
+    }
+
+
+def cmd_status(args):
+    """
+    Report drift between source and live. Changes nothing.
+
+    Args:
+        args (argparse.Namespace): unused beyond dispatch.
+
+    Returns:
+        int: OK when live matches source exactly, MCP_DRIFT when it does not,
+        MCP_BAD_SOURCE when there is nothing trustworthy to compare against.
+
+    Raises:
+        None
+    """
+
+    try:
+        groups     = load_source(source_path())
+        _, live    = load_live(target_path())
+    except SourceError as error:
+        print(f"[-] {error}", file=sys.stderr)
+        return airules.ExitStatus.MCP_BAD_SOURCE
+
+    report = compare(groups, live)
+    clean  = not any((report["missing"], report["drifted"],
+                      report["unmanaged"], report["disordered"]))
+
+    for name in report["missing"]:
+        print(f"[-] missing from live: {name}")
+
+    for name in report["drifted"]:
+        print(f"[-] drifted (live differs from source): {name}")
+
+    for name in report["unmanaged"]:
+        print(f"[*] unmanaged (live only — adopt or delete): {name}")
+
+    if report["disordered"]:
+        print("[*] live order differs from source order — apply restores it")
+
+    if clean:
+        print(f"[+] live matches source: {sum(len(m) for m in groups.values())} servers, "
+              f"{len(groups)} groups")
+        return airules.ExitStatus.OK
+
+    return airules.ExitStatus.MCP_DRIFT
+
+
+def cmd_apply(args):
+    """
+    Make the live config match the source, keeping unmanaged entries.
+
+    Args:
+        args (argparse.Namespace): unused beyond dispatch.
+
+    Returns:
+        int: OK when the write lands, MCP_BAD_SOURCE when either file cannot
+        be trusted.
+
+    Raises:
+        OSError: the backup or the final write fails. Deliberately not
+            swallowed — a sync that half-happened must not report success.
+    """
+
+    target = target_path()
+
+    try:
+        groups       = load_source(source_path())
+        config, live = load_live(target)
+    except SourceError as error:
+        print(f"[-] {error}", file=sys.stderr)
+        return airules.ExitStatus.MCP_BAD_SOURCE
+
+    merged = flatten(groups)
+
+    # Unmanaged entries survive, appended after the managed layout. They are
+    # named one by one because each is either something to adopt or something
+    # someone forgot they added — silence here is how a source of truth rots.
+    kept = [name for name in live if name not in merged]
+
+    for name in kept:
+        merged[name] = live[name]
+
+    if config.get("mcpServers") == merged:
+        print(f"[+] already in step: {len(merged)} servers")
+        return airules.ExitStatus.OK
+
+    # The whole pre-write file is kept, not just the servers key: this tool
+    # rewrites a file it does not own, so the escape hatch covers all of it.
+    if target.is_file():
+        into = airules.backup_dir(airules.backup_stamp())
+        into.mkdir(parents=True, exist_ok=True)
+        (into / target.name).write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"[*] what was there is saved at {into / target.name}")
+
+    config["mcpServers"] = merged
+    airules._atomic_write(target, json.dumps(config, indent=2) + "\n")
+
+    print(f"[+] applied {len(merged) - len(kept)} managed servers to {target}")
+
+    for name in kept:
+        print(f"[*] kept unmanaged: {name} — adopt it or delete it")
+
+    print("[*] running agent sessions pick this up on restart")
+
+    return airules.ExitStatus.OK
+
+
+def cmd_adopt(args):
+    """
+    Copy one unmanaged live server into a group of the source file.
+
+    Args:
+        args (argparse.Namespace): carries `name` and `group`.
+
+    Returns:
+        int: OK when the source now carries the server, MCP_BAD_SOURCE when
+        the files cannot be trusted or the adoption does not make sense —
+        unknown server, already-managed server, or unknown group. Each refusal
+        names what would fix it.
+
+    Raises:
+        OSError: the source write fails.
+    """
+
+    source = source_path()
+
+    try:
+        groups   = load_source(source)
+        _, live  = load_live(target_path())
+    except SourceError as error:
+        print(f"[-] {error}", file=sys.stderr)
+        return airules.ExitStatus.MCP_BAD_SOURCE
+
+    if args.name not in live:
+        print(f"[-] {args.name!r} is not in the live config — nothing to adopt", file=sys.stderr)
+        return airules.ExitStatus.MCP_BAD_SOURCE
+
+    if args.name in flatten(groups):
+        print(f"[-] {args.name!r} is already managed — edit the source file instead", file=sys.stderr)
+        return airules.ExitStatus.MCP_BAD_SOURCE
+
+    if args.group not in groups:
+        print(f"[-] no group {args.group!r}. Groups: {', '.join(groups)}", file=sys.stderr)
+        return airules.ExitStatus.MCP_BAD_SOURCE
+
+    groups[args.group][args.name] = live[args.name]
+
+    airules._atomic_write(source, json.dumps(groups, indent=2) + "\n")
+
+    # The file carries credentials, so its mode is part of the contract, and
+    # an atomic replace writes a fresh inode that would otherwise be 0644.
+    source.chmod(0o600)
+
+    print(f"[+] adopted {args.name!r} into {args.group!r}")
+    print("[*] run `mcp-sync apply` to settle the live order")
+
+    return airules.ExitStatus.OK
+
+
+def build_parser():
+    """
+    Describe the command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: with one subparser per verb, each dispatching
+        through set_defaults(run=...).
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="mcp-sync",
+        description="Keep the live MCP servers in step with the source-of-truth file.")
+
+    verbs = parser.add_subparsers(dest="command", required=True)
+
+    status = verbs.add_parser("status", help="report drift; change nothing")
+    status.set_defaults(run=cmd_status)
+
+    apply = verbs.add_parser("apply", help="make live match source; keep unmanaged entries")
+    apply.set_defaults(run=cmd_apply)
+
+    adopt = verbs.add_parser("adopt", help="copy one unmanaged live server into the source")
+    adopt.add_argument("name", help="server name as it appears in the live config")
+    adopt.add_argument("--group", required=True,
+                       help="which source group it belongs in")
+    adopt.set_defaults(run=cmd_adopt)
+
+    return parser
+
+
+def main():
+    """
+    Entry point.
+
+    Args:
+        None
+
+    Returns:
+        int: the exit status of the selected verb.
+
+    Raises:
+        None
+    """
+
+    args = build_parser().parse_args()
+
+    return args.run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
