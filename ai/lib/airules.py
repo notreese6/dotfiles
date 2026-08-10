@@ -138,21 +138,16 @@ CONFIG_KEY_LOCAL_RULES_REMOTE = "local_rules_remote"
 CONFIG_KEY_MODULES            = "modules"
 CONFIG_KEY_NOTES_PATH         = "notes_path"
 CONFIG_KEY_NOTES_REMOTE       = "notes_remote"
+CONFIG_KEY_ROLE               = "role"
+
+# The two machine roles. The library owns the config, so it owns the
+# vocabulary — a second copy in a tool is how the two come to disagree about
+# what "autorun" spells.
+ROLE_AUTORUN     = "autorun"
+ROLE_INTERACTIVE = "interactive"
 CONFIG_KEY_RULES_MODE         = "rules_mode"
 CONFIG_KEY_TARGETS            = "targets"
 CONFIG_KEY_UPDATED_AT         = "updated_at"
-
-# Every per-module answer lives under CONFIG_KEY_MODULES, keyed by module stem,
-# so adding a module never adds a top-level key. These are the flat keys that
-# came before it, each mapped to the stem it now answers for. Read once on load
-# and never written, so an older config keeps its answers instead of silently
-# reverting to defaults — which here means dropping whole modules of rules.
-# Delete this and _module_answers()'s use of it once no such config is left.
-CONFIG_KEY_MODULES_WERE = {
-    "notes_enabled":     "daily-notes",
-    "misc_enabled":      "misc",
-    "universal_enabled": "misc",
-}
 
 # The starting point for a machine with no config file yet: every agent this
 # tool supports. Derived from SUPPORTED_AGENTS by default_agents() rather than
@@ -966,6 +961,7 @@ class Config:
     modules:            dict           = field(default_factory=dict)
     notes_path:         Optional[Path] = None
     notes_remote:       str            = ""
+    role:               str            = ROLE_INTERACTIVE
     rules_mode:         str            = RULES_MODE_CLOBBER
     targets:            dict           = field(default_factory=dict)
     updated_at:         str            = ""
@@ -980,17 +976,12 @@ class Config:
         CONFIG_KEY_LOCAL_RULES_DIR,
         CONFIG_KEY_LOCAL_RULES_REMOTE,
         CONFIG_KEY_MODULES,
+        CONFIG_KEY_ROLE,
         CONFIG_KEY_NOTES_PATH,
         CONFIG_KEY_NOTES_REMOTE,
         CONFIG_KEY_RULES_MODE,
         CONFIG_KEY_TARGETS,
         CONFIG_KEY_UPDATED_AT,
-
-        # The superseded flat keys are owned too, so they are left out of
-        # `extra` and therefore dropped by the next save. Left in `extra` they
-        # would be copied forward forever, and a config holding two keys for one
-        # setting is a question about which one wins.
-        *CONFIG_KEY_MODULES_WERE,
     )
 
     @classmethod
@@ -1030,6 +1021,7 @@ class Config:
             modules            = _module_answers(data),
             notes_path         = _as_path(data.get(CONFIG_KEY_NOTES_PATH)),
             notes_remote       = data.get(CONFIG_KEY_NOTES_REMOTE, defaults.notes_remote),
+            role               = _role(data.get(CONFIG_KEY_ROLE)),
             rules_mode         = _rules_mode(data.get(CONFIG_KEY_RULES_MODE), defaults.rules_mode),
             targets            = _bool_map(data.get(CONFIG_KEY_TARGETS)),
             updated_at         = data.get(CONFIG_KEY_UPDATED_AT, defaults.updated_at),
@@ -1062,6 +1054,7 @@ class Config:
             CONFIG_KEY_LOCAL_RULES_REMOTE: self.local_rules_remote,
             CONFIG_KEY_MODULES:            dict(self.modules),
             CONFIG_KEY_NOTES_REMOTE:       self.notes_remote,
+            CONFIG_KEY_ROLE:               self.role,
             CONFIG_KEY_RULES_MODE:         self.rules_mode,
             CONFIG_KEY_TARGETS:            dict(self.targets),
             CONFIG_KEY_UPDATED_AT:         self.updated_at,
@@ -1137,6 +1130,26 @@ def _as_path(value):
     return Path(value) if value else None
 
 
+def _role(value):
+    """
+    Normalise a machine role read from the config.
+
+    Args:
+        value: whatever the config held under "role". Any type.
+
+    Returns:
+        str: ROLE_AUTORUN when the stored value is exactly that, otherwise
+        ROLE_INTERACTIVE. Unrecognised, missing and malformed all resolve to
+        interactive, because granting the unattended role by accident is the
+        failure that matters — it is only ever meant to be given out loud.
+
+    Raises:
+        None
+    """
+
+    return ROLE_AUTORUN if value == ROLE_AUTORUN else ROLE_INTERACTIVE
+
+
 def _rules_mode(value, fallback):
     """
     Coerce a stored rules mode into one this tool understands.
@@ -1201,19 +1214,7 @@ def _module_answers(data):
         None
     """
 
-    answers = {}
-
-    # Migrated first so the current shape below can override them. Iterating in
-    # CONFIG_KEY_MODULES_WERE order with setdefault makes the newer of two keys
-    # for one module win, since it is listed first — a config carrying both
-    # `misc_enabled` and the older `universal_enabled` is decided by the former.
-    for old_key, stem in CONFIG_KEY_MODULES_WERE.items():
-        if old_key in data:
-            answers.setdefault(stem, bool(data[old_key]))
-
-    answers.update(_bool_map(data.get(CONFIG_KEY_MODULES)))
-
-    return answers
+    return _bool_map(data.get(CONFIG_KEY_MODULES))
 
 
 def _agent_names(names):

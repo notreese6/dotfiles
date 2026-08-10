@@ -32,13 +32,13 @@ from pathlib import Path
 
 HOME = Path.home()
 
-# One override, then XDG. These are session markers and nothing more, so the
-# plain location is right; the AUTORUN_STATE_DIR fallback that used to sit here
-# only existed to follow the role marker onto local disk when the home was a
-# shared network volume.
+# A runtime directory, not a state directory: one empty file per session
+# recording "already asked", worthless the moment the session ends.
+# XDG_RUNTIME_DIR is cleaned up on logout, which is exactly the lifetime
+# wanted; /tmp is the fallback for a machine that does not set it.
 STATE_DIR = Path(
     os.environ.get("NOTES_REMINDER_STATE_DIR")
-    or Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "ai-notes"
+    or Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "dotfiles-notes-reminder"
 )
 
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")

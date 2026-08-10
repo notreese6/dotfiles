@@ -31,11 +31,7 @@ NV_SITE_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/autorun-mode/site/site.env"
 #     None
 nv_state_dir() {
 
-    # One override, then the XDG default. The site lookup that used to sit here
-    # existed because the home was a network volume shared by two machines, so
-    # "somewhere under ~" set the role for both at once and only the site knew
-    # which local path was right. The home is local disk now, so the plain
-    # answer is the correct one.
+    # One override, then the XDG default.
     echo "${AUTORUN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/autorun-mode}"
 }
 
@@ -53,9 +49,19 @@ nv_state_dir() {
 #     None
 nv_machine_role() {
 
-    local role=""
+    local role="" config="${XDG_CONFIG_HOME:-$HOME/.config}/ai-notes/config.json"
 
-    [ -r "$1/machine-role" ] && role=$(tr -d '[:space:]' < "$1/machine-role" 2>/dev/null)
+    # Read with sed rather than python3. This is sourced by every interactive
+    # shell, and starting an interpreter to pull one string out of a flat JSON
+    # file would put ~30ms on every prompt. The key is one value we control, so
+    # the parse is bounded — and a test asserts this agrees with the library,
+    # because hand-parsing JSON is exactly the thing that drifts unnoticed.
+    # Anchored to a top-level key: two spaces, then the name. Unanchored, a
+    # nested "role" anywhere in the file would match, granting the unattended
+    # role from a corrupted config — failing open in the one direction this
+    # must never fail. airules.Config.save() owns the format (json.dumps
+    # indent=2) and a test asserts the two agree.
+    [ -r "$config" ] && role=$(sed -n 's/^  "role"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$config" 2>/dev/null | head -1)
 
     case "$role" in
         autorun) echo "autorun"     ;;

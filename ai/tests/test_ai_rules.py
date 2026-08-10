@@ -973,6 +973,104 @@ class TestBackupGuard(SandboxedTestCase):
         self.assertEqual(backup.read_text(encoding="utf-8"), "SOMEONE ELSE'S RULES\n")
 
 
+class TestMachineRole(SandboxedTestCase):
+    """
+    Covers the machine role living in the config rather than a marker file.
+    """
+
+    def write_role(self, role):
+        """
+        Write a config carrying one role.
+
+        Args:
+            role (str): the value to store under "role".
+
+        Returns:
+            None
+
+        Raises:
+            OSError: the sandboxed config cannot be written.
+        """
+
+        self.write_config(agents=["claude"], role=role)
+
+    def bash_role(self):
+        """
+        Ask machine-role.sh what the role is, as an interactive shell would.
+
+        Args:
+            None
+
+        Returns:
+            str: the value it exports as NV_MACHINE_ROLE.
+
+        Raises:
+            OSError: the script cannot be run.
+        """
+
+        script = self.repo / "bash" / "machine-role.sh"
+        done   = subprocess.run(
+            ["bash", "-c", f'. "{script}" >/dev/null 2>&1; printf %s "$NV_MACHINE_ROLE"'],
+            capture_output=True, text=True, env=dict(os.environ),
+        )
+
+        return done.stdout
+
+    def test_the_role_is_read_from_the_config(self):
+        self.write_role(airules.ROLE_AUTORUN)
+
+        self.assertEqual(airules.Config.load().role, airules.ROLE_AUTORUN)
+
+    def test_bash_and_python_agree_on_the_role(self):
+        for role in (airules.ROLE_AUTORUN, airules.ROLE_INTERACTIVE):
+            with self.subTest(role=role):
+                self.write_role(role)
+
+                # machine-role.sh parses the JSON with sed rather than starting
+                # python on every interactive shell. That is only safe while the
+                # two answers match, so this is what makes the shortcut legal.
+                self.assertEqual(self.bash_role(), airules.Config.load().role)
+                self.assertEqual(self.bash_role(), role)
+
+    def test_an_unrecognised_role_reads_as_interactive(self):
+        for value in ("AUTORUN", "yes", "", None, 5, {"role": "autorun"}):
+            with self.subTest(value=value):
+                self.write_config(agents=["claude"], role=value)
+
+                # The unattended role is only ever granted out loud. Anything
+                # unrecognised has to fall to interactive, because the failure
+                # that matters is inheriting the sandbox-off role by accident.
+                self.assertEqual(airules.Config.load().role, airules.ROLE_INTERACTIVE)
+                self.assertEqual(self.bash_role(), airules.ROLE_INTERACTIVE)
+
+    def test_a_config_with_no_role_at_all_is_interactive(self):
+        self.write_config(agents=["claude"])
+
+        self.assertEqual(airules.Config.load().role, airules.ROLE_INTERACTIVE)
+        self.assertEqual(self.bash_role(), airules.ROLE_INTERACTIVE)
+
+    def test_the_saved_format_is_the_one_bash_can_parse(self):
+        self.write_role(airules.ROLE_AUTORUN)
+        airules.Config.load().save()
+
+        text = airules.config_path().read_text(encoding="utf-8")
+
+        # machine-role.sh anchors on a two-space indent to avoid matching a
+        # nested key. That is only correct while save() keeps writing this
+        # shape, so the format is asserted rather than assumed.
+        self.assertIn(f'\n  "{airules.CONFIG_KEY_ROLE}": "{airules.ROLE_AUTORUN}"', text)
+
+    def test_the_role_survives_a_save_round_trip(self):
+        self.write_role(airules.ROLE_AUTORUN)
+
+        config = airules.Config.load()
+        config.save()
+
+        # save() rebuilds the file from OWNED_KEYS, so a key missing from that
+        # tuple is dropped on the next write by anything that touches config.
+        self.assertEqual(airules.Config.load().role, airules.ROLE_AUTORUN)
+
+
 class TestShippedNotesModule(unittest.TestCase):
     """
     Covers the steps the always-on notes module must not lose to a trim.
