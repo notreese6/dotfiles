@@ -118,3 +118,26 @@ Before starting, restate in your own words:
 Once you have "go": run until the work is exhausted or the user stops you. Update
 the daily notes as findings land; never wait for the user mid-run; park any
 decision that needs a human as an `[!] [AUTORUN]` TODO and keep moving.
+
+## Phase 5 — When the run produces something big
+
+Not every run. This is for when unattended work generates a **substantial deliverable**:
+a long technical write-up, a set of findings with evidence, prototypes someone will
+actually run. It happens more here than in an interactive session, because a long
+unattended run has the time to produce documents faster than anyone can absorb them.
+That has already happened here: one run's write-ups, prototype scripts and data all
+landed loose in that day's notes folder and had to be reorganized afterwards.
+
+When it happens:
+
+- **File it as a report, not as daily notes.** One directory,
+  `<notes>/reports/<subject>_report/`, named for the subject. Everything from the
+  effort goes in it — index, parts, prototypes, data.
+- **Write the index first**, before the parts pile up. An unindexed pile of documents
+  is the characteristic failure of a productive unattended run.
+- **Point at it from `current/<project>.md` in the same turn.** A report nobody is told
+  about may as well not have synced.
+- **Keep the dated note short** — what landed, and a pointer. The detail is in the report.
+- **Mark plainly what is unverified.** An unattended box cannot reach authenticated
+  services, so anything not checked against a live system must say so rather than
+  reading as confirmed.

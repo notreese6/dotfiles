@@ -467,7 +467,8 @@ Always show links as the **full raw URL**, starting with `https://` (or `http://
 Pick the destination by what the file is for:
 
 - **Temporary / working files** (intermediate output, throwaway scripts, scratch data, downloaded logs) → the session scratchpad directory. Never `~`, never `/tmp` unless I ask.
-- **Deliverables and anything I might open, keep, or share** (reports, generated HTML/PDF, diagrams, exported tables, one-off documents) → **`~/Documents/`**, unless I named a path.
+- **Deliverables and anything I might open, keep, or share** (generated HTML/PDF, diagrams, exported tables, one-off documents) → **`~/Documents/`**, unless I named a path.
+- **A written report is the exception — it goes in the notes repo**, at `<notes>/reports/<subject>_report/`, per the daily-notes rules. A report has to reach my other machines and `~/Documents/` syncs nowhere. On an unattended box `~` is read-only, so `~/Documents/` there is not merely wrong, it fails.
 - **Project files** → inside that project's repo/working directory, in the directory the project's conventions imply.
 - If a file belongs to an established location I already use (e.g. daily notes, a repo's `docs/`), put it there rather than inventing a new spot.
 

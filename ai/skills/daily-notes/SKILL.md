@@ -70,6 +70,20 @@ If the transcript is not retrievable — Teams keeps only the ~2 most recent
 transcripts per recurring series, and org meetings you did not organize can
 return a 403 — note that in the recap rather than leaving an empty file.
 
+## Saving a report — not a transcript, not a daily note
+
+A report is a grouped **set** of files (an index, numbered parts, sometimes prototypes
+and data), not one document. It goes in its own directory at
+`<notes>/reports/<subject>_report/` — top-level, date-independent, named for the subject.
+
+- **Write the index first**, naming every sibling in reading order. It is the only file
+  another note ever links to.
+- **Prototypes and data live beside the prose that discusses them.** Splitting them out
+  of the report directory is what breaks the bare-filename cross-references.
+- **The dated note records that the report landed, and points at the directory.** The
+  standing pointer lives in `current/<project>.md`.
+- **Never file a report under `transcripts/`** — that is meeting transcripts only.
+
 ## Backfilling, and dating things you did not watch happen
 
 An agent cannot perceive elapsed time, so never guess how long ago something
