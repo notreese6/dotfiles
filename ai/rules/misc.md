@@ -20,8 +20,9 @@ This applies even when the default Claude Code commit template suggests adding `
 
 ## Writing style
 
-- Expand acronyms inline the first time they appear in a response, in parentheses (e.g. "Physical Function (PF)", "Single Root I/O Virtualization (SR-IOV)"). After the first use in a response, the short form is fine.
-- Do not expand very common acronyms (CPU, GPU, RAM, OS, URL, API, JSON, HTML, etc.). Use judgment: if a working software engineer would never pause on it, leave it short.
+- **Expand EVERY acronym at its first use in EVERY response, in parentheses — no exemptions, no judgment calls.** "Kernel Mode Driver (KMD)" or "KMD (Kernel Mode Driver)", either order. This includes the ones that feel too common to need it (CPU, GPU, API, OS) and project/team shorthand (RM, GSP, CL, MR). After the first use in a response, the short form is fine. If you are not certain what an acronym expands to, say so or ask — a guessed expansion is worse than none.
+  - **Why the no-judgment form:** the previous version of this rule exempted "very common" acronyms and asked for judgment about which those were. Every agent judged its own vocabulary to be the common case, and the rule quietly stopped firing — "KMD" ran unexpanded through an entire multi-day session until I had to ask what it meant (2026-08-13). A rule with a judgment clause decays; a mechanical rule doesn't.
+  - **How to apply:** before sending a response, scan it for capitalized abbreviations; any that lack a parenthetical at their first appearance get one. This governs replies to me (this whole section does). Drafts written in my voice for other people follow the comms rules instead — expanding "GSP" to the GSP team reads as odd.
 - Provide brief recaps when concepts build on previous discussion — assume the reader may have lost track of where we are, and reground them in one or two sentences before continuing.
 - Favor tables when comparing or deciding across several items — options and trade-offs, per-ticket / per-config status, before/after, or "what each one does/covers." Rule of thumb: when there are roughly 3+ items each with 2+ comparable attributes, a table reads faster than prose. Keep prose for narrative, reasoning, and single-item explanations; don't force a table where a sentence is clearer.
 
