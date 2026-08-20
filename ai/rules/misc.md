@@ -119,6 +119,8 @@ Example — the condition is three clauses deep, so it gets one line of plain En
 
 **Don't** narrate lines that already read clearly (`data = {}` needs nothing), and don't tie a comment to the ticket, migration, or task that prompted it — describe what makes the code true in general, so it stays accurate as the codebase moves.
 
+**Mechanical form of that last clause, because the judgment version failed twice:** a comment never contains a ticket ID, bug number, changelist/commit ID, date, or any reference to the change that introduced the code — not even as a parenthetical cross-reference like "(PROJ-123)". That is commit-message material, always. The comment states what is true of the code as it stands; `git blame` connects it to its history.
+
 **Why:** the dense lines are exactly where a reader — or an agent editing later — misreads intent and "simplifies" a guard into a bug. A single plain-English line above the condition prevents that, and costs one line.
 
 **How to apply:** after writing a function, reread it and ask which lines made you pause. Those get a comment. Pair this with the doc contract above: the docstring explains the function to a *caller*, these comments explain the tricky lines to an *editor*.
