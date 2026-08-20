@@ -172,14 +172,25 @@ class TestMcpSync(SandboxedTestCase):
         self.assertIn("looks flat", done.stderr)
 
     def test_status_refuses_one_server_in_two_groups(self):
-        self.write_source({"a": {"dup": {"url": "https://x"}},
-                           "b": {"dup": {"url": "https://x"}}})
+        self.write_source({"a": {"dup": {"type": "http", "url": "https://x"}},
+                           "b": {"dup": {"type": "http", "url": "https://x"}}})
         self.write_target({})
 
         done = self.run_cli("status")
 
         self.assertEqual(done.returncode, 12)
         self.assertIn("one server, one home", done.stderr)
+
+    def test_status_refuses_a_url_definition_with_no_type(self):
+        self.write_source({"ci-cd": {"typeless": {"url": "https://example.com/mcp"}}})
+        self.write_target({})
+
+        done = self.run_cli("status")
+
+        # Without an explicit type the agent parses the entry as stdio and
+        # drops it silently — present in every config, loaded by none.
+        self.assertEqual(done.returncode, 12)
+        self.assertIn("no \"type\"", done.stderr)
 
     # ---- apply ---------------------------------------------------------
 

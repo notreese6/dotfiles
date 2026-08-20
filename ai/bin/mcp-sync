@@ -125,6 +125,15 @@ def load_source(path):
             if not isinstance(definition, dict):
                 raise SourceError(f"{group}/{name} is not an object")
 
+            # A definition with no explicit type is parsed by the agent as a
+            # stdio server (command-based); one that only has a url is invalid
+            # stdio and gets dropped without any error. Refuse it here, where
+            # the fix is obvious, rather than shipping an entry no agent loads.
+            if "url" in definition and "type" not in definition:
+                raise SourceError(
+                    f"{group}/{name} has a url but no \"type\" — agents drop it "
+                    "silently. Add \"type\": \"http\" (or \"sse\").")
+
             if name in seen:
                 raise SourceError(
                     f"{name!r} appears in both {seen[name]!r} and {group!r} — one server, one home")
