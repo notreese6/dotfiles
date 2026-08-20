@@ -29,6 +29,7 @@ decisions. Chat-only resources (a paper or drive link pasted mid-call, a code
 path someone dropped) never appear in the spoken transcript and are silently
 lost if you only read the audio. Fold those links and resources into the recap,
 and into TODOs where they imply follow-up ("read the paper they linked").
+The full thread also gets saved verbatim beside the transcript — see below.
 
 `## Meetings` is **always the last section in the page**, and **dated files
 only** — the `current/` rollup has no Meetings section.
@@ -60,11 +61,36 @@ So when a fetch fails, say so **in the recap** *and* leave a `[>]` in
 `current/<project>.md` naming the fetch, not the person. Re-reading a note does
 not re-run anything — only a TODO framed as an action gets performed.
 
-## Also save the full transcript
+## Also save the full transcript — and the full chat
 
 In addition to the recap, save the meeting's full transcript **verbatim** to
 `<notes>/<date>/transcripts/<meeting-slug>.md` — a short header (meeting,
 date/time, attendees, recording link) followed by the raw transcript.
+
+**Then append the full chat, verbatim, to the same file** under a
+`## Meeting chat (verbatim)` heading: every message in chronological order —
+humans AND bots (Facilitator summaries carry the notes links) — each with
+sender and a local-time timestamp. Omit system events (call start/end,
+recording/transcript notices). Folding a summary of the chat into the recap is
+not the same thing: a recap is a reading, the log is the record, and only the
+log survives a wrong reading. Two traps that make "verbatim" need saying:
+
+- **The chat-listing API truncates long bodies to previews**, silently — a code
+  block or long link arrives cut off and still looks complete. Fetch any
+  truncated message individually for its full body before saving; a recap built
+  from previews once carried half a key listing and nothing flagged the cut.
+- **Inline images cannot be saved as text.** If the chat API in play can serve
+  the image bytes, save them beside the log in `transcripts/media/` as
+  `<meeting-slug>-NN.<ext>` and reference that path from the message's place in
+  the log — but only under a **5 MB per-image cap, enforced before the bytes
+  land** (check Content-Length or fetch with a client-side max-size abort;
+  never download-then-check). Oversized or unfetchable: leave a placeholder in
+  the log naming what the image showed and when it was posted, so the recording
+  can be consulted at that timestamp. The M365 connector is the unfetchable
+  case today: it strips img tags from message bodies and has no hostedContents
+  route, so inline images are placeholder-only through it. Large files are not
+  this problem — Teams sends them as OneDrive/SharePoint links, and links are
+  always saved as links, never bytes.
 
 If the transcript is not retrievable — Teams keeps only the ~2 most recent
 transcripts per recurring series, and org meetings you did not organize can

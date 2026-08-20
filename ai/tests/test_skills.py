@@ -275,6 +275,49 @@ class TestShippedSkillsAreLoadable(unittest.TestCase):
                 self.assertGreater(len(after[1].strip()), 40, "description too thin to match on")
 
 
+class TestDailyNotesSkillContent(unittest.TestCase):
+    """
+    Pins the load-bearing lines of the shipped daily-notes skill.
+    """
+
+    def skill_text(self):
+        """
+        Read the shipped daily-notes skill.
+
+        Args:
+            None
+
+        Returns:
+            str: the SKILL.md text as shipped in this repo.
+
+        Raises:
+            OSError: the skill file is missing or unreadable.
+        """
+
+        path = REPO_ROOT / "ai" / "skills" / "daily-notes" / "SKILL.md"
+
+        return path.read_text(encoding="utf-8")
+
+    def test_a_meeting_recap_saves_the_chat_verbatim_beside_the_transcript(self):
+        text = self.skill_text()
+
+        # The chat used to reach the notes only as a summary folded into the
+        # recap, and preview-truncated messages silently lost content — half a
+        # listing was missing and nothing flagged the cut. The pins are the
+        # heading the log lives under and the two failure modes that make
+        # "verbatim" real: truncated previews and images that need a
+        # placeholder.
+        self.assertIn("## Meeting chat (verbatim)", text)
+        self.assertIn("truncates long bodies to previews", text)
+        self.assertIn("Inline images cannot be saved as text", text)
+
+        # The image-byte cap exists so a fetchable image cannot quietly become
+        # a multi-gigabyte file in the notes repo — and it must be enforced
+        # before the bytes land, or the guard is a cleanup instead.
+        self.assertIn("5 MB per-image cap", text)
+        self.assertIn("enforced before the bytes", text)
+
+
 class TestSkillsFollowTheirModule(SandboxedTestCase):
     """
     Covers a skill being dropped when the module that owns it is switched off.
