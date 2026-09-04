@@ -121,6 +121,8 @@ Example — the condition is three clauses deep, so it gets one line of plain En
 
 **Mechanical form of that last clause, because the judgment version failed twice:** a comment never contains a ticket ID, bug number, changelist/commit ID, date, or any reference to the change that introduced the code — not even as a parenthetical cross-reference like "(PROJ-123)". That is commit-message material, always. The comment states what is true of the code as it stands; `git blame` connects it to its history.
 
+**This includes the evidence that established the behaviour.** Run IDs, job numbers, dates, benchmark tables, "proven on X", "originally this was Y" — none of it belongs in a comment, however hard-won. State the constraint the code has to satisfy and why, then stop: *"this format is dropped by the artifact filter"*, not *"proven on run 1234 where the manifest published and the two files it named did not"*. The evidence goes in the daily notes and on the ticket, which is where a narrative stays useful and where it can be corrected. A comment carrying a conclusion cannot be corrected by later evidence — it just sits there asserting something that has stopped being true.
+
 **Why:** the dense lines are exactly where a reader — or an agent editing later — misreads intent and "simplifies" a guard into a bug. A single plain-English line above the condition prevents that, and costs one line.
 
 **How to apply:** after writing a function, reread it and ask which lines made you pause. Those get a comment. Pair this with the doc contract above: the docstring explains the function to a *caller*, these comments explain the tricky lines to an *editor*.
@@ -370,6 +372,8 @@ Before making any git commit, show me the diff and the proposed commit message, 
 
 This applies to every commit, even if I authorized commits at the start of the work. It does not apply to non-commit git operations (status, diff, log, show) or to file edits, which you should proceed with normally. It does not apply to revertible scratch state like stashing.
 
+**Stage as you go, not only at a commit boundary.** When you finish an edit I asked for, `git add` it in the same turn. The staged diff is what I read when I review, so an unstaged edit is one I cannot see — I have read a stale diff and asked why a change was missing when the file on disk was already correct. Staging is not permission to commit; the gate above is unchanged. Leave anything I have deliberately left unstaged alone (say so and ask, rather than sweeping it in), and never stage in a checkout that is not the one you were working in.
+
 **Why:** Catching issues before they land in history — wrong files staged, sensitive content, a commit message that does not match what changed, a commit that should have been split or squashed. Once a commit is made (especially if pushed), fixing it requires history rewrites, which are noisy and sometimes destructive.
 
 **How to apply:** Treat "commit this" or "let's commit" as authorization to *prepare* a commit. Show the staged diff and proposed message, then wait. If I approve, commit. If I ask for changes, adjust and re-show. If I am clearly mid-flow and would obviously want a single commit at the end (e.g. you finished a multi-step refactor I scoped), still pause for review at the commit boundary.
@@ -465,16 +469,20 @@ Always show links as the **full raw URL**, starting with `https://` (or `http://
 
 ## Where to put files you create — never in `~`
 
-**Never create files directly in my home directory (`~`).** It is not a dumping ground; anything left there is clutter I have to find and clean up later.
+**Never create files _or directories_ directly in my home directory (`~`).** It is not a dumping ground; anything left there is clutter I have to find and clean up later. A new folder is not an exception to this — it is the worst case of it, because it looks organised while still being somewhere I never asked for.
 
 Pick the destination by what the file is for:
 
 - **Temporary / working files** (intermediate output, throwaway scripts, scratch data, downloaded logs) → the session scratchpad directory. Never `~`, never `/tmp` unless I ask.
 - **Deliverables and anything I might open, keep, or share** (generated HTML/PDF, diagrams, exported tables, one-off documents) → **`~/Documents/`**, unless I named a path.
 - **A written report is the exception — it goes in the notes repo**, at `<notes>/reports/<subject>_report/`, per the daily-notes rules. A report has to reach my other machines and `~/Documents/` syncs nowhere. On an unattended box `~` is read-only, so `~/Documents/` there is not merely wrong, it fails.
+- **Bulk artifacts I might want later but will not read as documents** (database dumps, backups
+  taken before a risky change, large downloaded archives) → **`~/Downloads/`**. These are neither
+  disposable nor documents: a backup that disappears with the scratchpad is not a backup, and it
+  does not belong in `~/Documents/` either.
 - **Project files** → inside that project's repo/working directory, in the directory the project's conventions imply.
 - If a file belongs to an established location I already use (e.g. daily notes, a repo's `docs/`), put it there rather than inventing a new spot.
 
 **Why:** files dropped in `~` get lost among dotfiles and system directories, are easy to forget, and clutter the one directory I look at most. `~/Documents/` is where I actually look for documents, and the scratchpad keeps disposable work out of the way entirely.
 
-**How to apply:** before writing a file, ask "is this disposable or is it a deliverable?" Disposable → scratchpad. Deliverable → `~/Documents/` (or the project). If neither fits and you're unsure where it belongs, ask me instead of defaulting to `~`. When you do create a deliverable, tell me the full path.
+**How to apply:** before writing a file **or creating a directory**, ask "is this disposable or is it a deliverable?" Disposable → scratchpad. Deliverable → `~/Documents/` (or the project). If neither fits and you're unsure where it belongs, ask me instead of defaulting to `~`. When you do create a deliverable, tell me the full path.
