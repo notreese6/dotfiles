@@ -28,7 +28,22 @@ This applies even when the default Claude Code commit template suggests adding `
 
 ## Code writing rules
 
-These govern code I write: contracts, comments, layout, duplication, naming, and output. They apply to every language unless a project's own conventions clearly override them — in which case match the project and tell me.
+These govern code I write: structure, contracts, comments, layout, duplication, naming, and output. They apply to every language unless a project's own conventions clearly override them — in which case match the project and tell me.
+
+### Favor the reading over the writing
+
+**When there is a choice between the code that is quicker to write and the code that is quicker to read, write the second one.** Every line is read far more often than it is written, and by then the context that made the clever version obvious is gone.
+
+In practice this decides a lot of small forks:
+
+- **Prefer the shape that removes an edge case over the shape that names it.** `is_last_attempt = attempt == count - 1` is a correctly-named boolean for a condition that should not have existed; moving the wait to the top of the loop deletes the question instead of answering it. Reach for the restructure before the explanatory name.
+- **Write a test as the question being asked.** `if driver_mode(name) not in ALLOWED` reads as the question; `if not any(m in name for m in ALLOWED)` makes the reader reconstruct it. Extract the value, then compare it.
+- **Start ranges at zero and say so.** `range(0, n)` over arithmetic that shifts the index, and never `n + 1` in a bound to compensate for a `1` somewhere else.
+- **A collection of allowed values is a list, not a tuple or a single value** — the set will grow, and a list says so.
+
+**Why:** the reader is usually me, months later, deciding whether a line is safe to change. Cleverness costs nothing to write and a great deal to verify, and the compact form is almost never the reason a program is slow.
+
+**How to apply:** after writing a block, reread it as someone who has never seen it. Any line that needs a comment to explain its *mechanics* — as opposed to its intent — is a line to restructure rather than annotate.
 
 ### Function documentation — every function gets a contract
 
@@ -121,7 +136,7 @@ Example — the condition is three clauses deep, so it gets one line of plain En
 
 **Mechanical form of that last clause, because the judgment version failed twice:** a comment never contains a ticket ID, bug number, changelist/commit ID, date, or any reference to the change that introduced the code — not even as a parenthetical cross-reference like "(PROJ-123)". That is commit-message material, always. The comment states what is true of the code as it stands; `git blame` connects it to its history.
 
-**This includes the evidence that established the behaviour.** Run IDs, job numbers, dates, benchmark tables, "proven on X", "originally this was Y" — none of it belongs in a comment, however hard-won. State the constraint the code has to satisfy and why, then stop: *"this format is dropped by the artifact filter"*, not *"proven on run 1234 where the manifest published and the two files it named did not"*. The evidence goes in the daily notes and on the ticket, which is where a narrative stays useful and where it can be corrected. A comment carrying a conclusion cannot be corrected by later evidence — it just sits there asserting something that has stopped being true.
+**This includes the evidence that established the behaviour.** Run IDs, job numbers, dates, benchmark tables, measured figures, who agreed to it ("confirmed by <name>"), "proven on X", "originally this was Y" — none of it belongs in a comment, however hard-won. State the constraint the code has to satisfy and why, then stop: *"this format is dropped by the artifact filter"*, not *"proven on run 1234 where the manifest published and the two files it named did not"*. The evidence goes in the daily notes and on the ticket, which is where a narrative stays useful and where it can be corrected. A comment carrying a conclusion cannot be corrected by later evidence — it just sits there asserting something that has stopped being true.
 
 **Why:** the dense lines are exactly where a reader — or an agent editing later — misreads intent and "simplifies" a guard into a bug. A single plain-English line above the condition prevents that, and costs one line.
 
@@ -187,6 +202,33 @@ SUPPORTED_AGENTS = (
 **Why:** the point is future edits landing in one place and a reader understanding a line without leaving it. A constant that serves neither is just a second name for the same thing.
 
 **How to apply:** before hoisting a literal, ask what breaks if it stays inline. If the honest answer is "nothing," leave it.
+
+### Structure first — a class for the shape, a function for the step
+
+**Default to a class for any group of values that travel together, however small and however one-off it looks.** A dict literal with named keys, a tuple that callers unpack positionally, or three parallel lists indexed in step are all a class that has not been written yet. Write the class.
+
+**Default to a function for any step that could be called twice**, even if today it is called once. "Might be reused" is enough; waiting for the second caller means the second caller copies the first.
+
+**But a one-liner is only a function when its name reads more clearly than the operation does.** That is the whole test, and it cuts both ways:
+
+- `url_basename(url)` earns it — `url.rsplit("/", 1)[-1]` does not say what it means, so the name is the explanation and the reader never has to decode the mechanics again.
+- `record_staged(entry)` does not — `entries.append(entry)` already says exactly that, and wrapping it buys a name that is no clearer, a docstring longer than the body, and one more hop before the reader finds out that all it does is append.
+
+Appending to a list, incrementing a counter, and returning a field are not steps. Wrapping them turns readable code into a scavenger hunt: three lines of logic become three definitions to open, and the shape of the loop stops being visible in the loop.
+
+**Why:** hiding a trivial operation behind a name is a cost with no benefit — it does not aid reuse, because the operation was already one call, and it does not aid reading, because the name says no more than the code. The result is a file where finding out what happens means following calls that turn out to do nothing.
+
+A class is not just a bag of fields. **The operations that only make sense on its data belong on it** — building it from raw input, deriving a value from its own fields, serialising it, summarising it. A field that can be computed from the others is a property, not stored state, so the two cannot disagree.
+
+The tells that a class is overdue:
+
+- The same set of keys is constructed by hand in more than one place, or the shape is only written down in the consumer.
+- A function threads four or five loose accumulators through a loop and then through its output.
+- A return value needs prose to explain which combination of its fields means what.
+
+**Why:** structure is where the contract lives. When the shape exists only as a dict literal, every consumer re-derives it, nothing declares it, and a renamed key fails somewhere far away and much later. It also compounds: the objects I skipped writing at the start were exactly the ones later needed to say what had gone wrong.
+
+**How to apply:** write the class when the values first travel together, not once the function gets long. If it feels too small to deserve a class, that is the moment — it will not shrink.
 
 ### Don't write the same code twice
 
