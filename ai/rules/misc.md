@@ -38,6 +38,7 @@ In practice this decides a lot of small forks:
 
 - **Prefer the shape that removes an edge case over the shape that names it.** `is_last_attempt = attempt == count - 1` is a correctly-named boolean for a condition that should not have existed; moving the wait to the top of the loop deletes the question instead of answering it. Reach for the restructure before the explanatory name.
 - **Write a test as the question being asked.** `if driver_mode(name) not in ALLOWED` reads as the question; `if not any(m in name for m in ALLOWED)` makes the reader reconstruct it. Extract the value, then compare it.
+- **Bind a constructed object to a name, then pass the name.** `upload = Upload(...)` on its own, then `planned.append(upload)` — never `planned.append(Upload(...))` with the fields spread over the lines between. Nesting a multi-line constructor inside another call buries the call being made underneath the object being built, and the reader hits a closing `))` having lost track of which paren closes what. Two statements, each doing one thing, both read at a glance.
 - **Start ranges at zero and say so.** `range(0, n)` over arithmetic that shifts the index, and never `n + 1` in a bound to compensate for a `1` somewhere else.
 - **A collection of allowed values is a list, not a tuple or a single value** — the set will grow, and a list says so.
 
