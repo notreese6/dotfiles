@@ -162,10 +162,83 @@ document citing its own sibling by two different paths.
 **Why step 2 comes before everything else:** one project logged under two names (`dotfiles` and `dotfiles-ai`, `coverage-automation` and `coverage_automation`) splits its history in two, and neither half ever says so. The reconcile in step 5 then reconciles the *other* file — the new name's file has no open TODOs to contradict, so it reads as a clean project while the real one silently stops being updated. It is the one mistake here that looks more correct the longer it goes on.
 
 **Sections (use these exact headings):**
-- `## Accomplishments` — short: what was achieved, how, and the workflow/approach, a sentence or two each.
+- `## Accomplishments` — short: what was achieved, how, and the workflow/approach, a sentence or two each. **Carry a metric and the scope wherever they exist** — see the section below.
 - `## In Progress` — what we're actively working on and how we've approached it (path taken, findings, blockers); may be longer.
 - `## TODOs` — identified work not yet started.
 - `## Meetings` (**always the last section in the page**) — recap of any meetings that day: attendees, what was decided, action items. **Dated files only — the `current/` rollup has no Meetings section.**
+
+## Put a number on it — Accomplishments carry metrics and scope
+
+**Every Accomplishment that moved something measurable states the measurement, as
+before → after with the delta.** "Made it faster" records nothing. "Cut the run
+from 12h to 2h, −83%" records something still quotable a year later.
+
+Shapes that work:
+
+| Kind | Write it as |
+|---|---|
+| Time or duration | `12h -> 2h (-83%)` |
+| Rate or percentage | `4% -> 90%` |
+| Breadth | `20+ components`, `3 platforms -> 11` |
+| Volume or size | `1.2 TB -> 150 GB (-88%)` |
+| Defects | `7 found, 4 of them in paths that had been reporting success` |
+| Throughput | `~40 runs/day -> ~400` |
+
+Rules for the numbers themselves:
+
+- **Give before AND after.** A lone "now at 90%" cannot be turned into a
+  contribution later; `4% -> 90%` can.
+- **Say where the number came from** whenever it is not obvious — measured,
+  computed, or estimated. An estimate labelled as one is useful; an estimate that
+  reads as measured is a claim that will get quoted back.
+- **A range, a floor, or an order of magnitude beats a fabricated point value.**
+  `20+`, `~3x`, `at least a day` are all honest. Inventing `23.4%` is not.
+- **Round honestly.** Three significant figures is nearly always more than
+  enough, and false precision reads as padding.
+- **If nothing was measurable, say what changed in kind instead** — a capability
+  that did not exist before, a failure mode that can no longer happen, a manual
+  step that is now automatic. Never manufacture a metric to satisfy this rule.
+
+**Why:** these notes are the raw material for status updates, handovers, reviews
+and promotion packets, and by the time any of those gets written the numbers are
+gone. "How much faster did that actually get?" is usually unanswerable six months
+on, and the honest answer becomes a shrug — so the work reads as smaller than it
+was. The number costs one clause at the time and cannot be recovered afterwards.
+
+**How to apply:** when writing an Accomplishment, ask "what was it before?" If
+there is an answer, it belongs in the line. And whenever a measurement surfaces
+during the work at all — a timing, a row count, a pass rate, a size — capture it
+in the note even when the entry is about something else. That is the moment it is
+cheapest to record, and the last moment it is free.
+
+### Scope — how far it reached, and the guardrails that keep it honest
+
+**Say who and what a change affected, not only what changed.** A measurement says
+how much moved; scope says how far it went. `3 platforms -> 11`, `every caller of
+the shared config`, `unblocked two people who had been stuck a week`. Without it,
+a change touching one script and a change touching everything read identically.
+
+The guardrails matter more than the field does, because scope is the part that
+rots into self-promotion first:
+
+- **State the reach you can point at, not the reach you can imagine.** "Everyone
+  who uses it" is a claim; "the four callers that import it" is a fact. When the
+  real number is unknown, write that it is unknown.
+- **Count what was affected, not what could be.** Potential reach is a forecast.
+  Label it as one or leave it out.
+- **Second-order effects belong to whoever produced them.** That a fix later
+  unblocked a launch is not your scope unless you did that part too.
+- **Understate rather than overstate.** An entry that reads smaller than the work
+  costs a little when it is read back. One that reads bigger costs the
+  credibility of every other entry in the file.
+- **"One file, one caller" is a legitimate entry.** Most work is small, and a
+  notes file where everything is far-reaching is a file nobody believes.
+
+**Why the guardrails and not just the rule:** the whole value of these notes is
+that they are true. The moment an entry is written to impress rather than to
+record, the archive stops working as evidence — including the accurate parts,
+because nothing afterwards distinguishes them. An accurate small number survives
+being checked; an inflated one loses the argument the first time somebody does.
 
 **When to reach for the skill:** a meeting recap, a backfill, or anything
 `daily-notes-sync` said that you did not expect — **invoke the `daily-notes`
