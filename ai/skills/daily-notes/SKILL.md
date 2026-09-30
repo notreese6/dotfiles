@@ -99,15 +99,18 @@ return a 403 — note that in the recap rather than leaving an empty file.
 ## Saving a report — not a transcript, not a daily note
 
 A report is a grouped **set** of files (an index, numbered parts, sometimes prototypes
-and data), not one document. It goes in its own directory at
-`<notes>/reports/<subject>_report/` — top-level, date-independent, named for the subject.
+and data), not one document. It goes in `<notes>/reports/<project>/<YYYY-MM-DD>/` —
+the project's name as in `current/`, and the day that version was written. To update a
+report, copy its files from the newest date folder that holds them into today's folder
+and edit the copies; never edit an older date folder unless asked. The daily-notes rules
+carry the full layout.
 
 - **Write the index first**, naming every sibling in reading order. It is the only file
   another note ever links to.
-- **Prototypes and data live beside the prose that discusses them.** Splitting them out
-  of the report directory is what breaks the bare-filename cross-references.
-- **The dated note records that the report landed, and points at the directory.** The
-  standing pointer lives in `current/<project>.md`.
+- **Prototypes and data live beside the prose that discusses them**, in the same dated
+  folder. Splitting them out is what breaks the bare-filename cross-references.
+- **The dated note records that the report landed, and points at its file.** The
+  standing pointer lives in `current/<project>.md` and moves to each new version.
 - **Never file a report under `transcripts/`** — that is meeting transcripts only.
 
 ## Backfilling, and dating things you did not watch happen

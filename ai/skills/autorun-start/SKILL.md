@@ -130,9 +130,10 @@ landed loose in that day's notes folder and had to be reorganized afterwards.
 
 When it happens:
 
-- **File it as a report, not as daily notes.** One directory,
-  `<notes>/reports/<subject>_report/`, named for the subject. Everything from the
-  effort goes in it — index, parts, prototypes, data.
+- **File it as a report, not as daily notes**, in `<notes>/reports/<project>/<YYYY-MM-DD>/`
+  with today's date. Everything from the effort goes in that folder — index, parts,
+  prototypes, data — named for the report. Updating an existing report means copying
+  its files from the newest date folder that holds them into today's and editing the copies.
 - **Write the index first**, before the parts pile up. An unindexed pile of documents
   is the characteristic failure of a productive unattended run.
 - **Point at it from `current/<project>.md` in the same turn.** A report nobody is told

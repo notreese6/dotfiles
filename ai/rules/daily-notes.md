@@ -44,9 +44,10 @@ Where to look, in order:
    and when. Read a few days back, not just today.
 3. **`<notes>/current/` as a listing** — when the project name is uncertain, this
    is the list of every project with open work.
-4. **`<notes>/reports/<subject>_report/`** — the standing multi-file deliverables.
+4. **`<notes>/reports/<project>/<YYYY-MM-DD>/`** — the standing multi-file deliverables.
    Reached from the pointer in `current/<project>.md`, not by browsing;
-   `reports/README.md` indexes them. Open one only when a rollup points you at it.
+   `reports/README.md` indexes them. Open one only when a rollup points you at it,
+   and read the **newest** date folder that holds it — that is the current version.
 
 **Run `daily-notes-sync pull` first.** Another machine may have written since
 this one last synced, and answering from stale notes is worse than answering
@@ -126,23 +127,28 @@ After finishing a **substantial task** — a feature/fix that lands, a non-trivi
 
 **Layout:** `<notes>/<YYYY-MM-DD>/<project>.md` (moved out of `~/Documents` on 2026-07-27 — that folder is macOS TCC-protected, which blocks agents/tools that lack a per-app grant, silently so in non-interactive runs) — `<YYYY-MM-DD>` is today's local date (compute it, e.g. `date +%F`); `<project>` is the project being worked on (git repo / working-dir name, e.g. `coverage-automation`). One file per project per day. For work **not tied to a single project** — general tooling, automation, workflow/settings changes, the notes system itself — use `general` as the `<project>` (i.e. `<notes>/<YYYY-MM-DD>/general.md`). That kind of meta-work is an accomplishment in its own right and gets recorded there, not crammed into a project's file.
 
-**Reports:** a large multi-file deliverable is not a daily note. It lives in its own
-directory at `<notes>/reports/<subject>_report/` — top-level, date-independent, and
-named for the **subject**, never for a ticket and never for a date. Reports are **not**
+**Reports:** a large multi-file deliverable is not a daily note. It lives at
+`<notes>/reports/<project>/<YYYY-MM-DD>/` — `<project>` exactly as in
+`current/<project>.md`, and the date the version was written. Reports are **not**
 transcripts; `transcripts/` stays meeting-only.
 
-Top-level rather than under a date because a daily note records one day while a report
-accretes across many. Filing it under a date forces an arbitrary choice of which day,
-and then splits the set the moment the work continues. That is not hypothetical: a
-report here has already ended up spread across two date folders, leaving a single
-document citing its own sibling by two different paths.
+Grouped by project so a project's reports sit together, and by date so each version
+stays whole. Before this layout, one report ended up spread across two date folders
+citing its own sibling by two paths, and another filled with `-v2` / `-v3` copies of
+the same document because there was nowhere else for the next version to go.
 
-- Everything belonging to one effort goes in **one** directory, so its files can cite
-  each other by bare filename and keep resolving.
-- Do not rename a report's files when moving it in — the existing cross-references
-  depend on those names.
-- `current/<project>.md` carries the pointer to the report directory. That is how a
-  report is found; never write a date-qualified path to a report file.
+- **A multi-file report keeps all its files in one date folder**, so they cite each
+  other by bare filename and keep resolving.
+- **Name files for the report** (`<report>-00-index.md`, `<report>-findings.md`), since
+  several reports can land in one project on one day.
+- **Updating a report: copy its files from the newest date folder that holds them into
+  today's folder and edit the copies.** A second update the same day edits today's copy.
+- **Never edit an older date folder unless explicitly asked.** It records what the
+  report said on that day — history, like a dated note.
+- Do not rename files when copying forward or moving a report in — the
+  cross-references depend on those names.
+- `current/<project>.md` points at the report's newest file path, and is updated when a
+  new version lands. `reports/README.md` indexes every report.
 
 **Pick the right project (every update):** before writing any of these files, decide which project the work actually belongs to — do NOT assume it's the session's origin project. A session that started on one project (e.g. coverage-automation) may turn to a different project, or touch several at once. File under the matching `<project>.md` (or `general.md`); if the work spans a group of projects, update each one's files. That is *which* project; step 2 of the procedure below is what it is *called*, and both have to be right.
 
@@ -152,7 +158,7 @@ document citing its own sibling by two different paths.
 
 **Procedure, every time:**
 1. **Run `daily-notes-sync pull`.** These notes are shared between machines, so the file on this one can be stale before you open it. It commits nothing, so it is safe at any point. If it names a file you are about to write, re-read that file and reconcile — do not overwrite it with what you had in mind before you knew.
-2. **Resolve the project name against the names already in use — never invent one without looking.** List `<notes>/current/` and the recent dated folders first. If the work belongs to a project already logged there, use *that* name exactly, even when another spelling reads better. Only create a new `<project>.md` when nothing there is this project.
+2. **Resolve the project name against the names already in use — never invent one without looking.** List `<notes>/current/` and the recent dated folders first, and check `<notes>/PROJECT-RENAMES.md`: a name listed there as **old** is never used again, even when a working directory, ticket or earlier transcript still carries it — file the work under its new name. If the work belongs to a project already logged, use *that* name exactly, even when another spelling reads better. Only create a new `<project>.md` when nothing there is this project.
 3. Ensure today's date folder exists (create it if missing). Open the project file if it exists; otherwise create it with the three headings below.
 4. **Read the whole file first** to get the full picture before writing.
 5. **Reconcile to keep it accurate:** move any item whose state changed into the right section — a TODO we've started → In Progress; a TODO or In-Progress item we've finished → Accomplishments.

@@ -518,7 +518,7 @@ Pick the destination by what the file is for:
 
 - **Temporary / working files** (intermediate output, throwaway scripts, scratch data, downloaded logs) → the session scratchpad directory. Never `~`, never `/tmp` unless I ask.
 - **Deliverables and anything I might open, keep, or share** (generated HTML/PDF, diagrams, exported tables, one-off documents) → **`~/Documents/`**, unless I named a path.
-- **A written report is the exception — it goes in the notes repo**, at `<notes>/reports/<subject>_report/`, per the daily-notes rules. A report has to reach my other machines and `~/Documents/` syncs nowhere. On an unattended box `~` is read-only, so `~/Documents/` there is not merely wrong, it fails.
+- **A written report is the exception — it goes in the notes repo**, at `<notes>/reports/<project>/<YYYY-MM-DD>/`, per the daily-notes rules. A report has to reach my other machines and `~/Documents/` syncs nowhere. On an unattended box `~` is read-only, so `~/Documents/` there is not merely wrong, it fails.
 - **Bulk artifacts I might want later but will not read as documents** (database dumps, backups
   taken before a risky change, large downloaded archives) → **`~/Downloads/`**. These are neither
   disposable nor documents: a backup that disappears with the scratchpad is not a backup, and it
