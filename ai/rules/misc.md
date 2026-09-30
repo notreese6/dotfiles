@@ -143,6 +143,58 @@ Example — the condition is three clauses deep, so it gets one line of plain En
 
 **How to apply:** after writing a function, reread it and ask which lines made you pause. Those get a comment. Pair this with the doc contract above: the docstring explains the function to a *caller*, these comments explain the tricky lines to an *editor*.
 
+### Mark anything unimplemented with `XXX - TODO`
+
+**Every incomplete path carries an `XXX - TODO` comment directly above it, saying what
+is missing and why.** Not at the end of the line, not buried in a docstring — on its
+own line, immediately above the thing it is about, so it is visible when the code is
+skimmed and greppable when it is not.
+
+Use the comment syntax of whatever language you are writing:
+
+```python
+# XXX - TODO: the construction has not been established, so a payload of this kind
+# can be recognised but never checked.
+LEGACY_MEASUREMENT_LENGTH = 40
+```
+
+```c
+/* XXX - TODO: only the version 2 layout is handled; version 1 falls through and is
+ * reported unchecked rather than assumed clean. */
+```
+
+```bash
+# XXX - TODO: this assumes one config per tree; a multi-config build would need the
+# loop below to run per output directory.
+```
+
+What counts as unimplemented is wider than a missing function:
+
+- **A branch that cannot reach an answer** — a case recognised but not handled, a
+  format parsed but not verified.
+- **A value that was measured rather than derived**, where the derivation is the real
+  goal. Say that it is observed, not computed.
+- **A deliberate limitation** — one input where several are possible, a single
+  directory where the real system has three.
+
+**Say what is missing, not that something is missing.** "XXX - TODO: fix this" is
+worth nothing. "XXX - TODO: not reached at all — these sit beside no header, and this
+route discovers payloads by walking headers" tells the next reader whether the gap is
+five minutes or a week, and whether it is even the right thing to work on.
+
+**Why:** the dangerous gaps are the ones that look finished. A branch that returns
+without a verdict, a size that was eyeballed, a loop that handles the first case — all
+read as working code. The marker is what separates "this is done" from "this is as far
+as it got", and it is the only thing that makes the incomplete parts of a program
+findable without reading all of it. `grep -rn 'XXX - TODO'` should be a complete
+inventory of what is left.
+
+**How to apply:** when you write a path that cannot reach an answer, mark it in the
+same edit — not afterwards, because afterwards does not happen. When you finish one,
+delete the marker in the same change that finishes it. Where the language allows it,
+make the convention enforceable rather than a discipline: a test that walks the cases
+and asserts every dead end carries a marker will catch the one you forget.
+
 ### Code layout — align assignments, break stanzas with blank lines
 
 Two rules, both visible here: **align the `=` in a run of consecutive assignments** so the values form a column, and **separate trains of thought with a blank line** even inside a short function.
@@ -260,6 +312,42 @@ This matters most at **call sites and in conditions**, where the name is often a
 
 **How to apply:** when you write a boolean parameter, variable, or field, say it aloud with "is it?" or "should it?" in front. If that doesn't parse as a sentence, rename it. Applies to function parameters, locals, and struct/dict fields alike.
 
+### Order a file so a reader meets every helper before its caller
+
+**A source file reads top to bottom: detail first, entry point last.** The last line
+of an executable file is the one that starts the program, the function it calls sits
+immediately above it, and every helper appears before whatever calls it.
+
+```python
+# imports
+
+def parse_one_record(line): ...      # the detail
+def load_records(path): ...          # calls parse_one_record
+def build_parser(): ...              # the interface
+def main(): ...                      # calls build_parser and load_records
+
+if __name__ == "__main__":           # the last line in the file
+    sys.exit(main())
+```
+
+Not a Python rule — the same ordering applies in any language that does not force
+declaration order. In C the definitions go in the same sequence beneath the
+prototypes; in shell, functions precede the line that invokes them (which the
+interpreter requires anyway).
+
+**Why:** reading a file straight down should never require jumping forward to find
+out what something does. When a helper sits below its caller, the reader hits a name
+with no meaning yet and has to search — and in a long file they scroll past the
+entry point entirely, which is the one function that says what the program is. Ending
+on `if __name__ == "__main__"` also makes "where does this start?" answerable by
+jumping to the bottom, in every file, without looking.
+
+**How to apply:** when you add a function, place it above its first caller rather
+than at the end of the file. When you find a file already out of order, reorder it as
+part of the change you are making there — the diff is pure movement and reviews
+quickly. Pair this with the `main()` rule below: `main` is a table of contents, and it
+belongs directly above the line that calls it.
+
 ### `main()` only calls other functions
 
 `main` is a table of contents, not a chapter. It reads arguments, dispatches, and returns an exit status — every step it takes is a call to a named function. No parsing, no `try`/`except` around real work, no loops, no printing beyond what a one-line call does.
@@ -284,6 +372,44 @@ def main(argv):
 Anyone opening the file should learn what the program does from `main` alone, then read only the branch they care about. When logic accretes there instead, the entry point becomes the one function nobody can skim — and the one nobody can test, because exercising any branch means running the whole program.
 
 **How to apply:** after writing `main`, check that every line is a call, a comparison, or a `return`. If a step needs a comment to explain what it does, that step wants to be a function whose name says it instead. The same discipline is worth applying to any dispatcher or top-level handler, not just a literal `main`.
+
+### Be operator-resistant — validate every input before doing any work
+
+**Check every input the program depends on, up front, and refuse to run when one is
+missing.** Not the first one. Not the ones you remember. Every one.
+
+Three parts, and the third is the one that gets skipped:
+
+- **Required inputs** — confirm each one exists and is usable *before* starting work.
+  A path that is not there, a file that will not parse, a directory that is empty:
+  say which one, and say it in terms of the thing that is actually wrong. "X does not
+  exist" beats a downstream symptom like "no results found".
+- **Optional inputs** — validate them too, and when one is absent **report what
+  stops working because of it**. Not "config not found" but "config not found, so
+  every per-user override is disabled". The reader cannot infer the consequence.
+- **Refuse rather than degrade.** A run missing an input still produces output, and
+  that output is indistinguishable from a clean run — the results it could not
+  produce are simply absent. Nobody reading it can tell which. Exit with a distinct
+  status so a caller can tell "did not run" from "ran and found nothing".
+
+**Assume the operator is in a hurry and will pass the wrong path.** They will point
+at the top of a checkout instead of the subdirectory, typo a flag, or run in a tree
+where half the inputs were never generated. Every one of those should produce a
+sentence naming the problem, not a confident empty report.
+
+**Why:** silent degradation is the worst failure a tool can have, because it is
+invisible at exactly the moment someone is trusting it. A scanner that checks
+nothing and a scanner that finds nothing print the same thing. This has already
+happened: a tool given a root one level too high resolved its manifest to a path
+that did not exist, parsed zero declarations, ran over twice as many files, and
+reported results with none of the metadata that made them meaningful — with no
+indication anything was wrong.
+
+**How to apply:** enumerate inputs mechanically rather than from memory — grep the
+source for every file read, path glob, environment variable and argument, then diff
+that list against what the program validates. Memory misses things; the audit does
+not. Do that sweep whenever an input is added, and write the validation in the same
+change that introduces the dependency.
 
 ### Log / print message style
 
