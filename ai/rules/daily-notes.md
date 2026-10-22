@@ -152,25 +152,36 @@ the same document because there was nowhere else for the next version to go.
 
 **Pick the right project (every update):** before writing any of these files, decide which project the work actually belongs to — do NOT assume it's the session's origin project. A session that started on one project (e.g. recipe-app) may turn to a different project, or touch several at once. File under the matching `<project>.md` (or `general.md`); if the work spans a group of projects, update each one's files. That is *which* project; step 2 of the procedure below is what it is *called*, and both have to be right.
 
-**`current/` live rollup:** `<notes>/current/<project>.md` holds the live **In Progress + TODOs** for each project (no Accomplishments — those are the dated history). It is the single "what's open right now" view. On every update, re-read and reconcile the relevant `current/` file(s): promote a TODO to In Progress when it's started; when an item finishes, remove it from `current/` and record it as an Accomplishment in that day's dated file; add newly-surfaced TODOs. Keep `current/` matching reality.
+**`current/` live rollup:** `<notes>/current/<project>.md` is the single "what's open right now" view for each project. It holds no Accomplishments (those are the dated history), and these sections, in this order:
+- `## North Star` (optional) — the end state every TODO works toward. Agreed with the user at the start of each `plan-iteration` and changed nowhere else.
+- `## State` — at most five lines, stamped with date and time, **rewritten in place** (never appended to): how the project stands, where to look next, and the newest report. A copy goes into that day's dated file, so states can be compared over time.
+- `## Blockers` — one table row per thing waiting on a person: `| marker | Waiting on | What | Link | Since |`. Every review, merge request, bug or ticket waiting on someone sits here with its **full URL**. **When it merges, closes or is abandoned, its row leaves** — the dated Accomplishment that records the outcome keeps the link. A blocker with no live link is either not a blocker or is missing its link.
+- `## In Progress` and `## TODOs` — one short entry each, with a pointer to the dated note or report that holds the history. The history itself does not live here. On every update, re-read and reconcile the relevant `current/` file(s): promote a TODO to In Progress when it's started; when an item finishes, remove it from `current/` and record it as an Accomplishment in that day's dated file; add newly-surfaced TODOs. Keep `current/` matching reality.
 
 **Capturing TODOs (any session, any project — this is global):** Whenever you raise, change, or finish a TODO in conversation — *not only* when a big task completes — immediately reflect it in BOTH that project's `current/<project>.md` and today's `<date>/<project>.md` TODOs, filed under the right project. This whole notes system is global across all sessions and projects: a TODO about a different project (even one raised mid-session here) is captured under *that* project, not the session's origin project.
 
 **Procedure, every time:**
 1. **Run `daily-notes-sync pull`.** These notes are shared between machines, so the file on this one can be stale before you open it. It commits nothing, so it is safe at any point. If it names a file you are about to write, re-read that file and reconcile — do not overwrite it with what you had in mind before you knew.
 2. **Resolve the project name against the names already in use — never invent one without looking.** List `<notes>/current/` and the recent dated folders first, and check `<notes>/PROJECT-RENAMES.md`: a name listed there as **old** is never used again, even when a working directory, ticket or earlier transcript still carries it — file the work under its new name. If the work belongs to a project already logged, use *that* name exactly, even when another spelling reads better. Only create a new `<project>.md` when nothing there is this project.
-3. Ensure today's date folder exists (create it if missing). Open the project file if it exists; otherwise create it with the three headings below.
+3. Ensure today's date folder exists (create it if missing). Open the project file if it exists; otherwise create it with the headings below.
 4. **Read the whole file first** to get the full picture before writing.
 5. **Reconcile to keep it accurate:** move any item whose state changed into the right section — a TODO we've started → In Progress; a TODO or In-Progress item we've finished → Accomplishments.
 6. Add or update the new work in the right section (update an existing entry in place, don't duplicate), then save.
 7. **Run `daily-notes-sync`.** It pulls, commits and pushes. A note that never leaves this machine is not a note the other machines have.
 
+**Links:** every merge request, review, bug and ticket gets its full URL the first time each entry mentions it — `https://tracker.example.org/issues/4821`, not a bare `4821`. A bare ID cannot be clicked, and an entry that needs a search before it can be acted on is an entry that waits.
+
 **Why step 2 comes before everything else:** one project logged under two names (`dotfiles` and `dotfiles-ai`, `recipe-app` and `recipe_app`) splits its history in two, and neither half ever says so. The reconcile in step 5 then reconciles the *other* file — the new name's file has no open TODOs to contradict, so it reads as a clean project while the real one silently stops being updated. It is the one mistake here that looks more correct the longer it goes on.
 
 **Sections (use these exact headings):**
+- `## State` (first) — that day's copy of the `current/` State paragraph, replaced through the day as it changes, so the last version is the day's closing state. Lets any two days be compared.
 - `## Accomplishments` — short: what was achieved, how, and the workflow/approach, a sentence or two each. **Carry a metric and the scope wherever they exist** — see the section below.
 - `## In Progress` — what we're actively working on and how we've approached it (path taken, findings, blockers); may be longer.
 - `## TODOs` — identified work not yet started.
+- `## Notes` — anything worth keeping that is not one of the above, written out in full. Two fixed lead-ins make the important kinds greppable across every day:
+  - `**Decided (<who>, YYYY-MM-DD):**` — a decision and the reason for it. `grep -h -A4 '\*\*Decided (' <notes>/*/<project>.md` lists every decision for export.
+  - `**Learned:**` — something that cost time or surprised us, and what to do about it next time.
+  Anything else is a plain note, with no lead-in. Decisions and lessons go here even when the day's Accomplishments mention the work, because an Accomplishment's text is about what landed, not about what was decided or learned along the way.
 - `## Meetings` (**always the last section in the page**) — recap of any meetings that day: attendees, what was decided, action items. **Dated files only — the `current/` rollup has no Meetings section.**
 
 ## Put a number on it — Accomplishments carry metrics and scope
