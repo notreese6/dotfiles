@@ -1,0 +1,529 @@
+#!/usr/bin/env python3
+"""
+Install this repo's agent hooks, and report what is wired.
+
+Hooks cannot be symlinked into place the way rules and skills are: each agent
+keeps them inside a JSON file it also uses for everything else — Claude's
+settings.json carries the model, theme and plugin list — so installing one means
+merging into a file that belongs to the user, not writing a file that belongs to
+us.
+
+That shapes every rule here:
+
+    never replace a file        merge one key, leave the rest byte-identical
+    never replace a hook        a hook of yours on the same event stays exactly
+                                as it is, and ours is added after it
+    never touch an agent you    only the agents named in the `agents` setting
+    did not choose              are written to
+    always be re-runnable       a hook already pointing at our script is done,
+                                not a duplicate to append
+
+Agents disagree on both the event names and the file schema, so each is
+described once in AGENTS below rather than special-cased at every call site.
+"""
+
+import argparse
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+
+HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+
+
+@dataclass(frozen=True)
+class HookSpec:
+    """
+    One hook this repo ships, and when it should fire.
+
+    Args:
+        script (str): file name under `ai/hooks/`.
+        event (str): the canonical event name. Each agent translates it into
+            its own vocabulary via SupportedAgent.native_event, so a hook is
+            described once rather than once per agent.
+        status (str): the one-line status message an agent may display.
+        needs_format (bool): True when the script must be told which output
+            shape to emit, because agents disagree on how a hook returns text.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    script:       str
+    event:        str
+    status:       str
+    needs_format: bool = False
+
+
+@dataclass(frozen=True)
+class Wired:
+    """
+    One hook newly wired into an agent.
+
+    Args:
+        script (str): the hook's script name.
+        beside (int): how many other commands already ran on the same event, so
+            a report can say ours was added after them rather than on its own.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    script: str
+    beside: int
+
+
+@dataclass(frozen=True)
+class AgentSelection:
+    """
+    Which agents a run will touch, and why the others are left alone.
+
+    Args:
+        chosen (list): [airules.SupportedAgent] agents named in the `agents`
+            setting that can carry hooks, in table order.
+        unconfigured (list): [str] agents that can carry hooks but are not in the
+            setting, so they are not touched.
+        unknown (list): [str] names in the setting that this tool does not know.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    chosen:       list
+    unconfigured: list
+    unknown:      list
+
+
+HOOKS = (
+    HookSpec(script="date-context", event="prompt_submit",
+             status="Checking current date", needs_format=True),
+    HookSpec(script="notes-reminder", event="stop",
+             status="Checking daily notes"),
+)
+
+
+def select_agents():
+    """
+    Decide which agents to wire, from the `agents` setting.
+
+    Reads the one agent table in airules rather than keeping a second. That table
+    already knows where each agent's rules and skills go; a private copy here is
+    how the three drift apart when one of them moves.
+
+    Args:
+        None
+
+    Returns:
+        AgentSelection: the configured agents that can carry hooks, the ones that
+        can but were not configured, and any configured name this tool does not
+        know. With no config file the setting defaults to every supported agent.
+
+    Raises:
+        OSError: the config file exists but cannot be read.
+        ValueError: the config file is not valid JSON, or its `agents` setting is
+            neither a name nor a list of names.
+    """
+
+    configured = airules.Config.load().agents
+    capable    = [a for a in airules.SUPPORTED_AGENTS.values() if a.hooks_relpath]
+
+    return AgentSelection(
+        chosen       = [a for a in capable if a.name in configured],
+        unconfigured = [a.name for a in capable if a.name not in configured],
+        unknown      = [name for name in configured if name not in airules.SUPPORTED_AGENTS],
+    )
+
+
+def choose_agents():
+    """
+    Resolve the agents to act on, and say so when that is not all of them.
+
+    Stops rather than guessing: a run that cannot tell which agents were chosen
+    would either touch ones nobody asked for or quietly do nothing, and either
+    looks like success.
+
+    Args:
+        None
+
+    Returns:
+        list or None: [airules.SupportedAgent] to act on, or None when the run
+        must stop. The reason has already been printed.
+
+    Raises:
+        None
+    """
+
+    try:
+        selection = select_agents()
+    except (OSError, ValueError) as exc:
+        print(f"[-] cannot read the agents setting ({exc}); no hooks were changed", file=sys.stderr)
+        return None
+
+    for name in selection.unknown:
+        print(f"[-] unknown agent {name!r} in the agents setting, skipped", file=sys.stderr)
+
+    if not selection.chosen:
+        print("[-] none of the configured agents can carry hooks, so nothing was wired", file=sys.stderr)
+        return None
+
+    if selection.unconfigured:
+        print(f"[*] not configured, so left alone: {', '.join(selection.unconfigured)}")
+
+    return selection.chosen
+
+
+def command_for(hook, agent):
+    """
+    Build the command line one agent should run for one hook.
+
+    Args:
+        hook (HookSpec): the hook.
+        agent (airules.SupportedAgent): the agent that will run it.
+
+    Returns:
+        str: an absolute command. Absolute because a hook runs with whatever
+        working directory and PATH the agent happens to have, and a bare name
+        that resolves in a shell often does not resolve there.
+
+    Raises:
+        None
+    """
+
+    command = str(HOOKS_DIR / hook.script)
+
+    if hook.needs_format:
+        command += f" --format={agent.name}"
+
+    return command
+
+
+def entry_for(hook, agent):
+    """
+    Build the JSON entry one agent expects for one hook.
+
+    Args:
+        hook (HookSpec): the hook.
+        agent (airules.SupportedAgent): the agent whose schema to follow.
+
+    Returns:
+        dict: the entry to place under the event name.
+
+    Raises:
+        None
+    """
+
+    command = command_for(hook, agent)
+
+    if agent.hooks_schema == airules.HOOKS_FLAT:
+        return {"command": command}
+
+    return {"hooks": [{"type": "command", "command": command,
+                       "statusMessage": hook.status}]}
+
+
+def commands_in(entries):
+    """
+    List every command already wired under one event.
+
+    Args:
+        entries (list): whatever the agent's file holds for that event.
+
+    Returns:
+        list: [str] the commands found. Both schemas are read, so this does not
+        need to know which agent it came from — a file written by hand in the
+        other shape is still understood rather than silently duplicated.
+
+    Raises:
+        None
+    """
+
+    found = []
+
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+
+        if "command" in entry:
+            found.append(str(entry["command"]))
+
+        for nested in entry.get("hooks", []) or []:
+            if isinstance(nested, dict) and "command" in nested:
+                found.append(str(nested["command"]))
+
+    return found
+
+
+def load(path):
+    """
+    Read an agent's hooks file.
+
+    Args:
+        path (pathlib.Path): the file.
+
+    Returns:
+        dict: its contents, or {} when it does not exist.
+
+    Raises:
+        json.JSONDecodeError: the file exists but is not valid JSON. Deliberately
+            fatal — merging into a file we cannot parse would mean rewriting it
+            from scratch, which is exactly the clobber this tool refuses.
+        ValueError: the file is valid JSON but not an object, so there is no key
+            to merge under.
+    """
+
+    if not path.is_file():
+        return {}
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    if not isinstance(data, dict):
+        raise ValueError(f"expected a JSON object, found {type(data).__name__}")
+
+    return data
+
+
+def install_into(agent, dry_run=False):
+    """
+    Wire every shipped hook into one agent.
+
+    Args:
+        agent (airules.SupportedAgent): the agent to wire.
+        dry_run (bool): True reports what would change and writes nothing.
+
+    Returns:
+        tuple[list, list, list]: (added, already, conflicts). `added` holds a
+        Wired for each hook newly wired, `already` the script names found
+        pointing at our script, and `conflicts` (script, event) pairs for an
+        event whose value is not a list, which there is no safe way to add to.
+        A hook of the user's on the same event is not a conflict: ours goes after
+        it and theirs is left exactly as it was.
+
+    Raises:
+        OSError: the file cannot be written.
+        json.JSONDecodeError: the existing file is not valid JSON.
+        ValueError: the file, or its `hooks` key, is not a JSON object.
+    """
+
+    path     = agent.hooks_path(airules.rules_roots())
+    data     = load(path)
+    hooks    = data.setdefault("hooks", {})
+    added, already, conflicts = [], [], []
+
+    if not isinstance(hooks, dict):
+        raise ValueError(f"'hooks' is a {type(hooks).__name__}, expected an object")
+
+    for key, value in agent.hooks_seed:
+        data.setdefault(key, value)
+
+    for hook in HOOKS:
+        event = agent.native_event(hook.event)
+
+        if not event:
+            continue
+
+        ours     = command_for(hook, agent)
+        current  = hooks.get(event)
+        existing = commands_in(current)
+
+        if ours in existing:
+            already.append(hook.script)
+            continue
+
+        # Something that is not a list cannot be added to without replacing it,
+        # and replacing it would discard whatever the user put there.
+        if current is not None and not isinstance(current, list):
+            conflicts.append((hook.script, event))
+            continue
+
+        # Theirs stay first and untouched; ours goes after. Both then run, which
+        # is what each person who wired one of them expects.
+        hooks[event] = (current or []) + [entry_for(hook, agent)]
+        added.append(Wired(script=hook.script, beside=len(existing)))
+
+    if added and not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    return added, already, conflicts
+
+
+def run_install(args):
+    """
+    Wire the hooks into every agent and report.
+
+    Args:
+        args (argparse.Namespace): parsed arguments; uses args.dry_run.
+
+    Returns:
+        int: 0 when every hook is wired or already was, 1 when the agents setting
+        could not be used, or a file or event could not be merged into — so a
+        script can tell "done" from "someone needs to look at this".
+
+    Raises:
+        OSError: a file cannot be written.
+    """
+
+    chosen = choose_agents()
+
+    if chosen is None:
+        return 1
+
+    blocked = False
+
+    for agent in chosen:
+        path = agent.hooks_path(airules.rules_roots())
+
+        try:
+            added, already, conflicts = install_into(agent, args.dry_run)
+        except json.JSONDecodeError as exc:
+            print(f"[-] {agent.name}: {path} is not valid JSON ({exc}) — left alone", file=sys.stderr)
+            blocked = True
+            continue
+        except ValueError as exc:
+            print(f"[-] {agent.name}: {path} cannot be merged into ({exc}) — left alone", file=sys.stderr)
+            blocked = True
+            continue
+
+        verb = "would wire" if args.dry_run else "wired"
+
+        for wired in added:
+            after = f" (after {wired.beside} of your own on that event)" if wired.beside else ""
+
+            print(f"[+] {agent.name}: {verb} {wired.script}{after}")
+        for name in already:
+            print(f"[*] {agent.name}: {name} already wired")
+        for name, event in conflicts:
+            print(f"[-] {agent.name}: {event} is not a list of hooks, so {name} could not be added",
+                  file=sys.stderr)
+            blocked = True
+
+    return 1 if blocked else 0
+
+
+def run_status(args):
+    """
+    Report which hooks each agent currently runs, changing nothing.
+
+    Args:
+        args (argparse.Namespace): parsed arguments. Unused; accepted so every
+            subcommand has one signature.
+
+    Returns:
+        int: 0 whenever it could report, including for an unreadable or malformed
+        hooks file, which is reported in place. A status command that exits
+        non-zero for a state cannot be used to check one. 1 only when the agents
+        setting itself could not be read, since then there is nothing to report on.
+
+    Raises:
+        None
+    """
+
+    chosen = choose_agents()
+
+    if chosen is None:
+        return 1
+
+    for agent in chosen:
+        path = agent.hooks_path(airules.rules_roots())
+
+        if not path.is_file():
+            print(f"[*] {agent.name}: no hooks file at {path}")
+            continue
+
+        try:
+            hooks = load(path).get("hooks", {})
+        except ValueError as exc:
+            print(f"[-] {agent.name}: {path} is not a usable hooks file ({exc})", file=sys.stderr)
+            continue
+
+        if not isinstance(hooks, dict):
+            print(f"[-] {agent.name}: {path} has a 'hooks' key that is not an object", file=sys.stderr)
+            continue
+
+        for hook in HOOKS:
+            event    = agent.native_event(hook.event)
+            existing = commands_in(hooks.get(event))
+            ours     = command_for(hook, agent)
+
+            others = len(existing) - 1
+
+            if ours in existing:
+                state = "ours" if not others else f"ours, after {others} of your own"
+            elif existing:
+                state = "another command (ours not wired)"
+            else:
+                state = "not wired"
+
+            print(f"[*] {agent.name:7} {event:20} {hook.script:16} {state}")
+
+    return 0
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="ai-hooks",
+        description="Wire this repo's hooks into each agent, without disturbing "
+                    "anything else in the files they live in.")
+
+    commands = parser.add_subparsers(dest="command", metavar="command", required=True)
+
+    install = commands.add_parser("install", help="wire every shipped hook into every agent")
+    install.add_argument("--dry-run", action="store_true",
+                         help="report what would change and write nothing")
+    install.set_defaults(run=run_install)
+
+    status = commands.add_parser("status", help="report what each agent currently runs")
+    status.set_defaults(run=run_status)
+
+    return parser
+
+
+def main():
+    """
+    Run the ai-hooks command line.
+
+    Args:
+        None
+
+    Returns:
+        int: process exit status.
+
+    Raises:
+        SystemExit: the arguments are invalid or --help was requested.
+        OSError: a file cannot be written.
+    """
+
+    airules.order_output()
+
+    args = build_parser().parse_args()
+
+    return args.run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

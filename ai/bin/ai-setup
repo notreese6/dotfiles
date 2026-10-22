@@ -1,0 +1,778 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+import notesync
+
+# macOS gates these three folders and iCloud Drive through TCC, independently of
+# Unix permissions, and denies a non-interactive process silently. Notes kept
+# under one of them break agents and cron jobs in a way that produces no error.
+TCC_DIRNAMES  = ("Documents", "Desktop", "Downloads")
+ICLOUD_MARKER = os.path.join("Library", "Mobile Documents")
+
+# The answers this tool accepts from the environment, so a provisioning script or
+# a test can drive it with no terminal. Named for the same reason as the config
+# keys: a mistyped one reads as unset rather than failing.
+ENV_NONINTERACTIVE     = "AI_SETUP_NONINTERACTIVE"
+ENV_AGENTS             = "AI_SETUP_AGENTS"
+ENV_LOCAL_RULES_DIR    = "AI_SETUP_LOCAL_RULES_DIR"
+ENV_LOCAL_RULES_REMOTE = "AI_SETUP_LOCAL_RULES_REMOTE"
+ENV_NOTES_PATH         = "AI_SETUP_NOTES_PATH"
+ENV_NOTES_REMOTE       = "AI_SETUP_NOTES_REMOTE"
+ENV_RULES_MODE         = "AI_SETUP_RULES_MODE"
+
+# One per module, built from its stem so a module added to the repo gets a
+# non-interactive override without this file being touched:
+# `daily-notes` -> AI_SETUP_MODULE_DAILY_NOTES.
+ENV_MODULE_TEMPLATE    = "AI_SETUP_MODULE_{stem}"
+ENV_BACKUP_DIR_ROOT    = "AI_SETUP_BACKUP_DIR"
+
+NOTES_DIRNAME = "daily-notes"
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser. A bare invocation is
+        valid and runs setup, unlike `ai-rules`, because setup is the whole
+        point of the command rather than one of several things it could do.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="ai-setup",
+        description="Configure the AI rules layering and assemble each agent's rules.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report the settings that would be written, then stop without touching anything",
+    )
+
+    return parser
+
+
+def is_noninteractive():
+    """
+    Say whether this run must not stop to ask the user anything.
+
+    Args:
+        None
+
+    Returns:
+        bool: True when the environment variable forces it, or when stdin is not
+        a terminal — a pipe, a cron job, or a test harness. False when there is
+        someone there to answer.
+
+    Raises:
+        None
+    """
+
+    if os.environ.get(ENV_NONINTERACTIVE) == "true":
+        return True
+
+    return not sys.stdin.isatty()
+
+
+def ask(question, default, env_key):
+    """
+    Get one answer from the environment, the user, or the default.
+
+    Args:
+        question (str): the prompt text, without the default or punctuation.
+        default (str): used when the user answers with a bare newline, and as
+            the whole answer when this run cannot prompt.
+        env_key (str): environment variable that overrides both. An empty value
+            counts as an answer of "none", not as unset, so a remote can be
+            cleared non-interactively.
+
+    Returns:
+        str: the answer, stripped of surrounding whitespace.
+
+    Raises:
+        OSError: stdin cannot be read, or the prompt cannot be written.
+    """
+
+    override = os.environ.get(env_key)
+    if override is not None:
+        return override.strip()
+
+    if is_noninteractive():
+        return default
+
+    # Shown in brackets so pressing enter is visibly the same as re-choosing what
+    # is already configured, which is what makes a re-run an edit rather than a
+    # fresh start.
+    answer = input(f"{question} [{default}]: ").strip()
+
+    return answer if answer else default
+
+
+def absolute_under(answer, home):
+    """
+    Turn a path answer into an absolute one.
+
+    Args:
+        answer (str): what the user typed, possibly `~`-prefixed or relative.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        pathlib.Path: `answer` with a leading `~` expanded, anchored under
+        `home` when it is still relative. A bare word would otherwise resolve
+        against the current directory, which for a backup location means
+        scattering files wherever the command happened to be run.
+
+    Raises:
+        None
+    """
+
+    path = Path(answer).expanduser()
+
+    return path if path.is_absolute() else home / path
+
+
+def ask_yes_no(question, default, env_key):
+    """
+    Ask a yes/no question, keeping the blank-is-the-default shape.
+
+    Rendered `[Y/n]` or `[y/N]`, capital marking the default, which is the
+    convention people already read without thinking. Pressing enter keeps it.
+
+    Args:
+        question (str): the prompt text.
+        default (bool): the setting as it stands; decides which letter is
+            capitalised and what a bare enter means.
+        env_key (str): environment variable that overrides both.
+
+    Returns:
+        bool: True for yes/y/true/1 in any case, False for anything else, and
+        `default` when the prompt went unanswered.
+
+    Raises:
+        OSError: stdin cannot be read, or the prompt cannot be written.
+    """
+
+    shown  = "Y/n" if default else "y/N"
+    answer = ask(question, shown, env_key)
+
+    # ask() hands `shown` straight back when the user pressed enter or when this
+    # run cannot prompt at all. Either way the setting is unchanged.
+    if answer == shown:
+        return default
+
+    return answer.strip().lower() in ("y", "yes", "true", "1")
+
+
+def warn_if_not_ssh(remote):
+    """
+    Point out an http(s) remote, which a headless clone often cannot use.
+
+    Args:
+        remote (str): the configured remote, or "" when there is none.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    if not remote.startswith(("http://", "https://")):
+        return
+
+    # Not an error: an http remote can work where the host allows anonymous
+    # read, or where a credential helper is configured. It is a warning because
+    # neither of those travels — install.sh runs this with no terminal, so a
+    # credential prompt there does not ask, it fails.
+    print(f"[-] {remote} is an http(s) remote. Cloning it needs credentials this tool cannot "
+          f"supply when run without a terminal, as install.sh does — prefer an ssh:// or git@ URL",
+          file=sys.stderr)
+
+
+def module_env_key(stem):
+    """
+    Build the environment variable that answers one module's question.
+
+    Args:
+        stem (str): the module's filename without ".md", e.g. "daily-notes".
+
+    Returns:
+        str: the variable name, e.g. "AI_SETUP_MODULE_DAILY_NOTES". Dashes
+        become underscores because a dash cannot appear in a shell variable
+        name, so `AI_SETUP_MODULE_DAILY-NOTES` could never be set.
+
+    Raises:
+        None
+    """
+
+    return ENV_MODULE_TEMPLATE.format(stem=stem.upper().replace("-", "_"))
+
+
+def ask_about_modules(config, base, home):
+    """
+    Ask one question per optional rules module, in the modules' declared order.
+
+    Required modules are not asked about, and a module already answered in the
+    config is pre-filled with that answer, so a re-run is an edit rather than a
+    fresh start. Answers are written back to `config.modules` in the order asked,
+    which is the order they then appear in the config file and in the assembly.
+
+    Args:
+        config (airules.Config): mutated in place — `.modules`, and `.notes_path`
+            when the daily-notes module ends up on.
+        base (pathlib.Path): the `ai/` directory, whose `rules/` is scanned.
+        home (pathlib.Path): the user's home directory, for path defaults and
+            for shortening the paths named in the clobber warning.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdin cannot be read, or a module cannot be read.
+        UnicodeDecodeError: a module is not valid UTF-8.
+    """
+
+    discovered = airules.discover_modules(base / airules.RULES_DIRNAME)
+
+    # Rebuilt rather than updated in place so a module deleted from the repo
+    # drops out of the config instead of lingering as an answer to a question
+    # nobody asks any more.
+    answers = {}
+
+    for module in airules.optional_modules(discovered):
+        answers[module.stem] = ask_yes_no(
+            module.prompt,
+            module.is_selected(config.modules),
+            module_env_key(module.stem),
+        )
+
+        # Asked here rather than after the loop so it lands directly under the
+        # question it depends on. Only asked when the answer will be used: asking
+        # where notes live on a machine that will not keep them is a question
+        # with no consequence, and a setup that asks those trains you to stop
+        # reading the ones that matter.
+        if module.stem == airules.NOTES_MODULE_STEM and answers[module.stem]:
+            config.notes_path = absolute_under(ask(
+                "Daily-notes path",
+                str(config.notes_path or home / NOTES_DIRNAME),
+                ENV_NOTES_PATH,
+            ), home)
+            print("    Blank is fine: notes are still written, still committed locally by")
+            print("    daily-notes-sync, and nothing else changes — they just do not reach")
+            print("    another machine. Add a remote later and it starts syncing.")
+            config.notes_remote = ask(
+                "Daily-notes git remote — SSH URL, and private (blank = local only)",
+                config.notes_remote,
+                ENV_NOTES_REMOTE,
+            )
+            warn_if_not_ssh(config.notes_remote)
+
+    config.modules = answers
+
+
+def warn_if_local_rules_are_stranded(local_dir, base):
+    """
+    Point out private rules sitting where nothing will read them.
+
+    The default moved out of the repo tree, so `ai/local_rules/*.md` is no
+    longer read unless the config points at it. Anyone who followed the older
+    instructions has rules there that now reach no agent — and a rule silently
+    not applied looks exactly like a rule being followed.
+
+    Args:
+        local_dir (pathlib.Path): the directory actually configured.
+        base (pathlib.Path): the `ai/` directory, holding the in-repo layer.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: a directory exists but cannot be listed.
+    """
+
+    in_repo = base / airules.LOCAL_RULES_DIRNAME
+
+    # Nothing to say when that is the configured directory, nor when it holds no
+    # rules of its own — the shipped `.gitignore` placeholder is not a rule.
+    if in_repo == local_dir or not any(in_repo.glob(airules.LOCAL_RULES_GLOB)):
+        return
+
+    stranded = sorted(p.name for p in in_repo.glob(airules.LOCAL_RULES_GLOB))
+
+    print(f"[-] {in_repo} holds {len(stranded)} rules file(s) that nothing reads: "
+          f"{', '.join(stranded)}", file=sys.stderr)
+    print(f"[-] the private layer is read from {local_dir}. Move them there, or point "
+          f"local_rules_dir at {in_repo}", file=sys.stderr)
+
+
+def warn_if_remote_yielded_no_rules(remote, local_dir):
+    """
+    Point out a configured private remote that produced no rules.
+
+    Not a failure: a private repo can legitimately be empty on the day it is
+    created, and one holding only the boilerplate README a web UI ships is the
+    same situation. It is worth saying out loud because the run otherwise
+    reports success and leaves no private layer at all, which is exactly what a
+    working setup looks like from the outside.
+
+    Args:
+        remote (str): the configured remote, or "" when there is none.
+        local_dir (pathlib.Path): the directory the private layer is read from.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: the directory exists but cannot be read.
+        UnicodeDecodeError: a file there is not valid UTF-8.
+    """
+
+    if not remote or airules.read_local_rules(local_dir).strip():
+        return
+
+    print(f"[-] {remote} produced no rules in {local_dir}, so there is no private layer",
+          file=sys.stderr)
+    print(f"[-] a repo holding only a README counts as empty here — README.md is skipped "
+          f"deliberately. Push at least one other *.md and re-run", file=sys.stderr)
+
+
+def report_notes_repo(config):
+    """
+    Say what the notes directory needs, and do none of it.
+
+    Creating a repository out of someone's notes, or rewriting an existing
+    repository's remote, is their decision — not a side effect of running
+    setup. So every case below either clones into a directory that is empty
+    (which is fetching, not making) or prints the exact command to run.
+
+    Args:
+        config (airules.Config): the saved settings. `notes_path` and
+            `notes_remote` are read; nothing is mutated.
+
+    Returns:
+        bool: True when the notes layer is ready to sync, False when something
+        is still needed — a directory the owner has to turn into a repository,
+        a remote that has to be added, or a clone that could not be reached.
+
+    Raises:
+        OSError: the directory cannot be inspected.
+        subprocess.CalledProcessError: a clone was attempted and failed.
+    """
+
+    notes_dir = config.notes_path
+    remote    = config.notes_remote
+    state     = notesync.notes_repo_state(notes_dir, remote)
+
+    if state is notesync.RepoState.READY:
+        return True
+
+    if state is notesync.RepoState.ABSENT and remote:
+        print(f"[*] cloning {remote} into {notes_dir}")
+        try:
+            subprocess.run(["git", "clone", "--quiet", remote, str(notes_dir)], check=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            # Reported, not raised: an unreachable notes host is a bad afternoon,
+            # not a reason to end the run in a traceback with the rules unwritten.
+            print(f"[-] could not clone {remote}: {exc}", file=sys.stderr)
+            print(f"[-] notes will not sync until that works; everything else is set up",
+                  file=sys.stderr)
+            return False
+
+        return True
+
+    if state is notesync.RepoState.ABSENT:
+        print(f"[-] {notes_dir} is empty and no notes remote is set, so nothing will sync",
+              file=sys.stderr)
+        return False
+
+    if state is notesync.RepoState.NOT_A_REPO:
+        print(f"[-] {notes_dir} holds notes but is not a git repository, and nothing here "
+              f"will make it one", file=sys.stderr)
+        print(f"[-] create it yourself when you are ready:", file=sys.stderr)
+        print(f"      git -C {notes_dir} init", file=sys.stderr)
+        print(f"      git -C {notes_dir} add -A && git -C {notes_dir} commit -m 'existing notes'",
+              file=sys.stderr)
+        if remote:
+            print(f"      git -C {notes_dir} remote add origin {remote}", file=sys.stderr)
+            print(f"      git -C {notes_dir} push -u origin HEAD", file=sys.stderr)
+        return False
+
+    if state is notesync.RepoState.NO_REMOTE:
+        print(f"[-] {notes_dir} is a git repository with no remote, so nothing will sync",
+              file=sys.stderr)
+        print(f"      git -C {notes_dir} remote add origin {remote}", file=sys.stderr)
+        return False
+
+    # REMOTE_DIFFERS. Repointing someone's repository at a different remote is
+    # how work ends up pushed somewhere it was never meant to go, so this shows
+    # both and changes neither.
+    print(f"[-] {notes_dir} points at a different remote than the config:", file=sys.stderr)
+    print(f"      repo says:   {notesync.remote_url(notes_dir)}", file=sys.stderr)
+    print(f"      config says: {remote}", file=sys.stderr)
+    print(f"[-] change whichever is wrong; nothing was altered", file=sys.stderr)
+
+    return False
+
+
+def ask_rules_mode(config, home):
+    """
+    Ask whether to replace the reader's rules files or append to them.
+
+    Only asked when there is something to lose. With no existing file, the two
+    modes differ in nothing a reader would notice, and a question whose answer
+    changes nothing teaches people to stop reading the questions.
+
+    Args:
+        config (airules.Config): mutated in place — `.rules_mode`.
+        home (pathlib.Path): the user's home directory, for shortening paths.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdin cannot be read, or a path cannot be inspected.
+        BadAgentsError: the configured agents cannot be resolved.
+    """
+
+    resolved = airules.agent_targets(config.agents)
+    existing = [t.path for t in resolved.targets
+                if t.path.exists() and not t.path.is_symlink()]
+
+    if not existing:
+        config.rules_mode = airules.RULES_MODE_CLOBBER
+        return
+
+    print()
+    print("[!] You already have rules in these files:")
+    for path in existing:
+        print(f"      {str(path).replace(str(home), '~')}")
+    print()
+    print("    clobber  — replace each with a link to this repo's assembled rules.")
+    print("               Your own rules stop being read. They are copied to the")
+    print("               backup directory first, but the live file is only ours.")
+    print("    additive — keep your file exactly as it is and append the sections")
+    print("               you asked for below, between markers. Re-running replaces")
+    print("               that appended region and never touches your own text.")
+
+    answer = ask(
+        f"How should we treat them ({airules.RULES_MODE_CLOBBER}/{airules.RULES_MODE_ADDITIVE})",
+        config.rules_mode,
+        ENV_RULES_MODE,
+    ).strip().lower()
+
+    # Anything unrecognised keeps what is configured rather than guessing. The
+    # guess that costs something is "clobber", so it is not the one to default
+    # to when the reader typed something the tool did not understand.
+    config.rules_mode = answer if answer in airules.RULES_MODES else config.rules_mode
+
+
+def is_tcc_protected(notes_path, home):
+    """
+    Say whether a path sits somewhere macOS gates behind TCC.
+
+    Args:
+        notes_path (pathlib.Path): the path to judge.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        bool: True when the path is directly under ~/Documents, ~/Desktop,
+        ~/Downloads, or an iCloud Drive directory. False otherwise, including
+        for any path outside the home directory.
+
+    Raises:
+        None
+    """
+
+    # iCloud is checked against the whole path: it is gated the same way but is
+    # not one of the three folder names, so the list alone would miss it.
+    if ICLOUD_MARKER in str(notes_path):
+        return True
+
+    try:
+        relative = notes_path.resolve().relative_to(home.resolve())
+    except ValueError:
+        # Outside HOME entirely, so none of the per-user folders can apply.
+        # relative_to raises rather than returning None, and letting that escape
+        # would reject a perfectly good path like /srv/notes with a traceback.
+        return False
+
+    return bool(relative.parts) and relative.parts[0] in TCC_DIRNAMES
+
+
+def warn_if_tcc(notes_path, home):
+    """
+    Warn when the chosen notes path is one macOS will silently block.
+
+    Args:
+        notes_path (pathlib.Path): the path the user chose.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    if not is_tcc_protected(notes_path, home):
+        return
+
+    # [!] rather than [-]: nothing has failed, which is exactly the problem. A
+    # TCC denial in a cron or agent context returns EPERM with no prompt and no
+    # log, so notes silently stop syncing and the setup that caused it looks
+    # like it succeeded. That is the "silently misleading state" [!] is for.
+    folders = ", ".join(TCC_DIRNAMES)
+    print(f"[!] {notes_path} is inside a macOS-restricted folder ({folders}, or iCloud). Agents and "
+          f"non-interactive tools can be denied access there with no error at all — "
+          f"~/{NOTES_DIRNAME} avoids it", file=sys.stderr)
+
+
+def gather(base, home):
+    """
+    Collect every setting, from the environment or the user, without writing.
+
+    Each default is the value already in the config, so a re-run edits settings
+    rather than resetting them, and an unanswered prompt changes nothing.
+
+    Args:
+        base (pathlib.Path): the `ai/` directory this tool was run from.
+        home (pathlib.Path): the user's home directory.
+
+    Returns:
+        airules.Config: the record loaded from disk with this run's answers
+            applied. Nothing has been written or cloned yet.
+
+    Raises:
+        BadAgentsError: the stored `agents` setting is neither a name nor a list
+            of names.
+        OSError: stdin cannot be read, or a candidate directory cannot be
+            inspected.
+        ValueError: the config file is not valid JSON.
+    """
+
+    # Loaded rather than built from scratch, so every setting this tool does not
+    # ask about survives the save untouched instead of being reset to a default.
+    config = airules.Config.load()
+
+    config.local_rules_remote = ask(
+        "Private local-rules git remote — SSH URL like ssh://git@host/you/repo.git (blank = none)",
+        config.local_rules_remote,
+        ENV_LOCAL_RULES_REMOTE,
+    )
+    warn_if_not_ssh(config.local_rules_remote)
+    config.agents = airules.normalize_agent_names(ask(
+        f"Agent targets, spaces or commas ({', '.join(airules.known_agent_names())})",
+        " ".join(config.agents) or " ".join(airules.default_agents()),
+        ENV_AGENTS,
+    ))
+    # After the agents are chosen, because their names decide which files these
+    # are, and before the module questions, because what the reader keeps is a
+    # bigger decision than what goes into what they keep.
+    ask_rules_mode(config, home)
+
+    ask_about_modules(config, base, home)
+
+    config.backup_dir = absolute_under(ask(
+        "Backup directory",
+        str(config.backup_dir or airules.default_backup_root()),
+        ENV_BACKUP_DIR_ROOT,
+    ), home)
+
+    config.ai_dir          = base
+    config.local_rules_dir = Path(
+        os.environ.get(ENV_LOCAL_RULES_DIR)
+        or config.local_rules_dir
+        or airules.default_local_rules_dir()
+    )
+
+    return config
+
+
+def is_bare(directory):
+    """
+    Say whether a directory is free for a clone to land in.
+
+    Args:
+        directory (pathlib.Path): the candidate clone target.
+
+    Returns:
+        bool: True when the directory is absent, empty, or holds nothing but the
+        `.gitignore` that ships the otherwise-empty directory in this repo.
+        False when it holds anything else, which is taken as rules already
+        there.
+
+    Raises:
+        OSError: the directory exists but cannot be listed.
+    """
+
+    if not directory.is_dir():
+        return True
+
+    # The placeholder does not count as occupancy: without this the shipped
+    # local_rules/ is never bare, and a configured remote would never be used.
+    return all(entry.name == ".gitignore" for entry in directory.iterdir())
+
+
+def clone_local_rules(remote, local_dir):
+    """
+    Clone the private rules repo into the local-rules directory.
+
+    Cloned to a scratch sibling and moved in, because git refuses to clone into
+    a directory that already holds anything — including the `.gitignore` that
+    ships this one.
+
+    Args:
+        remote (str): the git remote to clone. Must be non-empty.
+        local_dir (pathlib.Path): the directory to end up holding the clone.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: the scratch directory or the moves fail.
+        subprocess.CalledProcessError: git is missing, or the clone fails (a bad
+            URL, no access, no network).
+    """
+
+    scratch = local_dir.with_name(f"{local_dir.name}.{os.getpid()}.clone")
+
+    print(f"[*] cloning {remote} into {local_dir}")
+    try:
+        subprocess.run(["git", "clone", "--quiet", remote, str(scratch)], check=True)
+
+        local_dir.mkdir(parents=True, exist_ok=True)
+        for entry in scratch.iterdir():
+            shutil.move(str(entry), str(local_dir / entry.name))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def apply_rules(base):
+    """
+    Run the sibling `ai-rules apply` to assemble and link the rules.
+
+    Args:
+        base (pathlib.Path): the `ai/` directory holding `bin/ai-rules`.
+
+    Returns:
+        int: the exit status ai-rules returned, passed straight up so a refusal
+        to overwrite a backup is not reported here as a successful setup.
+
+    Raises:
+        OSError: `ai-rules` is missing or is not executable.
+    """
+
+    command = [str(base / "bin" / "ai-rules"), "apply"]
+
+    return subprocess.run(command, env=dict(os.environ, AI_DIR=str(base))).returncode
+
+
+def run_setup(should_write):
+    """
+    Collect the settings and, unless this is a dry run, apply them.
+
+    Args:
+        should_write (bool): False to report the settings and stop, changing
+            nothing on disk.
+
+    Returns:
+        airules.ExitStatus or int: OK when setup finished, whatever `ai-rules`
+        returned when it did not, and OK for a dry run.
+
+    Raises:
+        OSError: stdin, stdout, or a directory cannot be read or written.
+        ValueError: the config file is not valid JSON.
+    """
+
+    home = Path(os.path.expanduser("~"))
+    base = airules.ai_dir(__file__)
+
+    config = gather(base, home)
+
+    # The tag lives here rather than in describe(), which returns lines so the
+    # library stays free of stdout and each CLI labels them its own way.
+    for line in config.describe():
+        print(f"[*] {line}")
+
+    if config.modules.get(airules.NOTES_MODULE_STEM) and config.notes_path:
+        warn_if_tcc(config.notes_path, home)
+
+    if not should_write:
+        print("[*] dry run, nothing was written")
+        return airules.ExitStatus.OK
+
+    # Saved before anything that can fail. The answers are work the user just
+    # did; a clone that cannot reach its host must not throw them away and make
+    # them retype the lot. A config naming an unreachable remote is harmless —
+    # the next run pre-fills from it, which is how you correct one.
+    config.save()
+
+    if config.local_rules_remote and is_bare(config.local_rules_dir):
+        try:
+            clone_local_rules(config.local_rules_remote, config.local_rules_dir)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"[-] could not clone {config.local_rules_remote}: {exc}", file=sys.stderr)
+            print(f"[-] your answers are saved in {airules.config_path()}; fix the remote or "
+                  f"clear the setting and re-run", file=sys.stderr)
+            return airules.ExitStatus.CLONE_FAILED
+
+    warn_if_remote_yielded_no_rules(config.local_rules_remote, config.local_rules_dir)
+    warn_if_local_rules_are_stranded(config.local_rules_dir, base)
+
+    # After the local-rules clone, so a run that sets both up reports them in
+    # the order it did them, and only when the module that uses notes is on.
+    # Reported, never fatal. The notes layer not being ready is a to-do for the
+    # owner; the rules have nothing to do with it and must still be installed.
+    if config.modules.get(airules.NOTES_MODULE_STEM) and config.notes_path:
+        report_notes_repo(config)
+
+    status = apply_rules(base)
+    if status != airules.ExitStatus.OK:
+        return status
+
+    print(f"[+] setup complete, config written to {airules.config_path()}")
+
+    return airules.ExitStatus.OK
+
+
+def main():
+    """
+    Run the ai-setup command line.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus or int: process exit status.
+
+    Raises:
+        SystemExit: the arguments are invalid or `--help` was requested.
+            argparse exits 2 for a usage error and this function is never
+            reached.
+        OSError: stdin, stdout, or a directory cannot be read or written.
+        ValueError: the config file is not valid JSON.
+    """
+
+    airules.order_output()
+
+    parser = build_parser()
+    args   = parser.parse_args()
+
+    return run_setup(should_write=not args.dry_run)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

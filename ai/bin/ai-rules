@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import airules
+
+
+def build_parser():
+    """
+    Describe this tool's command line.
+
+    Args:
+        None
+
+    Returns:
+        argparse.ArgumentParser: the configured parser. Each subcommand sets a `run`
+        default holding the function that carries it out, so the caller
+        dispatches without re-checking the command name. The subcommand is
+        required, so argparse rejects a bare invocation itself.
+
+    Raises:
+        None
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="ai-rules",
+        description="Assemble each configured agent's rules file from the selected rule modules and the private layer.",
+    )
+
+    # required=True makes a bare invocation argparse's own usage error rather
+    # than a command this tool has to guess at.
+    commands      = parser.add_subparsers(dest="command", metavar="command", required=True)
+    apply_command = commands.add_parser("apply", help="write the assembled rules to every configured agent")
+    apply_command.set_defaults(run=run_apply)
+
+    where_command = commands.add_parser("where", help="print the resolved paths this machine uses")
+    where_command.set_defaults(run=run_where)
+
+    return parser
+
+
+def warn_unknown_agents(unknown):
+    """
+    Report configured agent names that this tool does not recognize.
+
+    Args:
+        unknown (list of str): names with no entry in airules.SUPPORTED_AGENTS.
+            An empty list prints nothing.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stderr cannot be written.
+    """
+
+    valid = ", ".join(airules.known_agent_names())
+
+    for name in unknown:
+        # !r quotes the name, so a typo like 'claud' is not read as prose
+        print(f"[-] unknown agent {name!r} in the 'agents' setting, skipped (valid: {valid})", file=sys.stderr)
+
+
+def report_written(written):
+    """
+    Report each rules file written, its backup, and any manual step left.
+
+    Args:
+        written (list of airules.WrittenRules): one record per file written,
+            whose `.backup` is None when that target did not exist beforehand.
+            An empty list prints nothing.
+
+    Returns:
+        None
+
+    Raises:
+        OSError: stdout cannot be written.
+    """
+
+    for record in written:
+        # Two different things happen to a target, and saying "linked" for both
+        # would describe an append as a replacement — exactly the thing someone
+        # choosing additive mode wanted not to happen.
+        if record.is_appended:
+            print(f"[+] appended to {record.target}, keeping what was already there")
+        else:
+            print(f"[+] linked {record.target}")
+
+        # None whenever there was nothing worth preserving — the path was absent,
+        # or was already our link. Named in full because this is the only copy
+        # of whatever was there before, and a backup nobody can find is one
+        # nobody trusts.
+        if record.backup is not None:
+            print(f"[*] what was there is saved at {record.backup}")
+
+        # True for an agent that reads its rules out of its own settings UI, not
+        # off disk, so writing the file is only half the job — say where to paste
+        # it from. Asked of the agent record rather than of its name, so a new
+        # agent needing the same follow-up gets it by setting the flag in
+        # airules.SUPPORTED_AGENTS, with nothing to change here.
+        if record.agent.needs_manual_paste:
+            print(f"[*] cursor global rules are settings-only — paste {record.target} into "
+                  "Cursor > Settings > Rules > User Rules")
+
+
+def report_skills(linked, conflicts, removed=()):
+    """
+    Say which skills were linked, and which names were already taken.
+
+    Args:
+        linked (list of str): names now pointing at this repo. May be empty.
+        conflicts (list): [(str, pathlib.Path)] a shipped name where something
+            the tool did not create already sits. May be empty.
+        removed (list of str): shipped skills unlinked because the module that
+            owns them is now off. May be empty.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
+    if linked:
+        print(f"[+] linked {len(linked)} skill(s): {', '.join(linked)}")
+
+    # Named rather than left to be noticed. A skill going away is the visible
+    # half of switching a module off, and silence here looks like the answer
+    # was ignored -- which is the bug this whole path exists to fix.
+    if removed:
+        print(f"[*] removed {len(removed)} skill(s) whose module is off: {', '.join(removed)}")
+
+    # Reported rather than resolved. Whatever is already there is the user's,
+    # and replacing it to install ours is the clobber this tool refuses to do
+    # anywhere else.
+    for name, path in conflicts:
+        print(f"[-] skill {name!r} not linked: {path} exists and is not ours", file=sys.stderr)
+
+
+def run_where():
+    """
+    Print where everything actually lives on this machine.
+
+    Exists so nothing else has to name a path that is only true here. Every one
+    of these is configurable or environment-dependent — the config honours
+    $XDG_CONFIG_HOME, the repo can be cloned anywhere, and the private layer has
+    its own setting — so a rule that writes a literal path is wrong on the next
+    machine and gives no hint that it is.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus: OK always. Reporting where things are cannot fail
+        usefully; anything unconfigured prints as (unset) rather than raising.
+
+    Raises:
+        OSError: the config file exists but cannot be read.
+        ValueError: the config file is not valid JSON.
+    """
+
+    config = airules.Config.load()
+    roots  = airules.rules_roots()
+
+    print(f"[*] config:        {airules.config_path()}")
+    print(f"[*] rules source:  {config.ai_dir or '(unset)'}")
+    print(f"[*] private layer: {config.local_rules_dir or '(unset)'}")
+    print(f"[*] assembled:     {airules.assembled_path()}")
+
+    for name in config.agents:
+        agent = airules.SUPPORTED_AGENTS.get(name)
+
+        if agent is None:
+            continue
+
+        print(f"[*] {name + ':':<14} {agent.rules_path(roots)}")
+
+    return airules.ExitStatus.OK
+
+
+def run_apply():
+    """
+    Assemble the rules and write them to every configured agent.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus: OK on success; MISSING_MODULE when a selected rules
+        module has no file behind it; NO_RULES_FOUND when every selected layer
+        is absent or blank; NO_KNOWN_AGENTS when no configured agent is
+        recognized, so nothing was written; BAD_AGENTS_SETTING when the `agents`
+        setting is not a name or a list of names.
+
+    Raises:
+        OSError: a target directory cannot be created, or a read or write
+            fails (e.g. permissions, read-only filesystem, no space).
+        ValueError: the config file is not valid JSON.
+        UnicodeDecodeError: a rules file is not valid UTF-8.
+    """
+
+    base = airules.ai_dir(__file__)
+
+    # A stale AI_DIR silently sources the rules from a moved or renamed clone,
+    # so the directory they came from is echoed rather than left to be guessed.
+    print(f"[*] rules source: {base}")
+
+    try:
+        result = airules.apply_rules(base)
+    # Ahead of FileNotFoundError, which it subclasses. A selected module with no
+    # file behind it is a broken install rather than missing input, and stopping
+    # here is the point: skipping it would write rules that are quietly short a
+    # whole discipline, and a nonzero exit halts a script that ignores the text.
+    except airules.MissingModuleError as exc:
+        print(f"[-] {exc}", file=sys.stderr)
+        return airules.ExitStatus.MISSING_MODULE
+    except FileNotFoundError as exc:
+        print(f"[-] {exc}", file=sys.stderr)
+        return airules.ExitStatus.NO_RULES_FOUND
+    except airules.NoAgentsError as exc:
+        warn_unknown_agents(exc.unknown)
+        valid = ", ".join(airules.known_agent_names())
+        print(f"[-] no known agents configured, nothing was written (valid: {valid})", file=sys.stderr)
+        return airules.ExitStatus.NO_KNOWN_AGENTS
+    except airules.BadAgentsError as exc:
+        valid = ", ".join(airules.known_agent_names())
+        print(f"[-] {exc} (valid: {valid})", file=sys.stderr)
+        return airules.ExitStatus.BAD_AGENTS_SETTING
+
+    warn_unknown_agents(result.unknown)
+
+    # Named before the links, because this is the file that actually holds the
+    # rules — each agent path below is only a pointer at it.
+    print(f"[+] assembled {result.assembled}")
+    report_written(result.written)
+    report_skills(result.skills, result.skill_conflicts, result.skills_removed)
+
+    return airules.ExitStatus.OK
+
+
+def main():
+    """
+    Run the ai-rules command line.
+
+    Args:
+        None
+
+    Returns:
+        airules.ExitStatus: process exit status, whatever the dispatched command
+        returns.
+
+    Raises:
+        SystemExit: no command was given, the arguments are invalid, or
+            `--help` was requested. argparse exits 2 for a usage error, which is
+            why airules.ExitStatus has no member for it — argparse produces that
+            status itself and this function is never reached.
+        OSError: a target directory cannot be created, or a read or write
+            fails (e.g. permissions, read-only filesystem, no space).
+        ValueError: the config file is not valid JSON.
+        UnicodeDecodeError: a rules file is not valid UTF-8.
+    """
+
+    airules.order_output()
+
+    parser = build_parser()
+    args   = parser.parse_args()
+
+    return args.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

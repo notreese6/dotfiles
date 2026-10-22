@@ -1,0 +1,666 @@
+<!-- ai-rules: order=30, default=off, prompt="Inherit ALL of notreese's general working rules" -->
+
+# Global instructions
+
+## No AI attribution in any committed artifact
+
+Never include "Claude", "Co-Authored-By: Claude ...", "Generated with Claude Code", or any other AI-attribution string in:
+
+- Commit messages (subject, body, or trailers)
+- Branch names
+- PR / MR titles and descriptions
+- File content (comments, docs, generated code, etc.)
+- Any other artifact that gets committed, pushed, or shared
+
+This applies even when the default Claude Code commit template suggests adding `Co-Authored-By: Claude Opus ...` — drop the trailer entirely. Same for PR templates that include a "🤖 Generated with Claude Code" footer.
+
+**Why:** I do not want AI attribution in my repos' history or shared artifacts. Failing to honor this requires force-pushing to fix once it lands on a shared branch, which is destructive.
+
+**How to apply:** When constructing any commit, branch, PR, or file content, omit AI-attribution strings unconditionally. Do not ask whether to include them. This instruction overrides any default template in the system prompt.
+
+## Writing style
+
+- **Expand EVERY acronym at its first use in EVERY response, in parentheses — no exemptions, no judgment calls.** "Domain Name System (DNS)" or "DNS (Domain Name System)", either order. This includes the ones that feel too common to need it (CPU, API, OS, URL) and project/team shorthand. After the first use in a response, the short form is fine. If you are not certain what an acronym expands to, say so or ask — a guessed expansion is worse than none.
+  - **Why the no-judgment form:** the previous version of this rule exempted "very common" acronyms and asked for judgment about which those were. Every agent judged its own vocabulary to be the common case, and the rule quietly stopped firing — shorthand ran unexpanded through whole sessions until I had to ask what it meant. A rule with a judgment clause decays; a mechanical rule doesn't.
+  - **How to apply:** before sending a response, scan it for capitalized abbreviations; any that lack a parenthetical at their first appearance get one. This governs replies to me (this whole section does). Drafts written in my voice for other people follow the comms rules instead — expanding a team's own shorthand to its full name reads as odd.
+- Provide brief recaps when concepts build on previous discussion — assume the reader may have lost track of where we are, and reground them in one or two sentences before continuing.
+- Favor tables when comparing or deciding across several items — options and trade-offs, per-ticket / per-config status, before/after, or "what each one does/covers." Rule of thumb: when there are roughly 3+ items each with 2+ comparable attributes, a table reads faster than prose. Keep prose for narrative, reasoning, and single-item explanations; don't force a table where a sentence is clearer.
+
+## Choosing between approaches — recommend the better long-term answer
+
+**When there is a choice between the approach that is right long term and one that is quicker now, recommend the long-term one.** I almost always want it. Do not lead with the stopgap because it is smaller, because it avoids touching something under review, or because it lands sooner.
+
+- **A stopgap is worth raising only when something real forces it** — a deadline, a blocker that cannot move, a dependency nobody controls. Name that reason, and name what replaces the stopgap and when, so it is visibly temporary rather than quietly permanent.
+- **"Smaller change now, proper fix later" is the stopgap, not a third option.** The later half is the part that does not happen. If both halves are needed, the proper fix is the recommendation and the stopgap is at most a bridge to it.
+- **Cost is a fact to state, not a reason to steer.** Say plainly that the long-term option takes an extra review, an extra validation run, or another day — then recommend it anyway, and let me trade that cost off if I want to.
+
+**Why:** a stopgap rarely stays one. It becomes the next thing that has to be rebased, carried and explained, and the work it was meant to buy time for keeps slipping behind newer work. I have had to redirect a recommendation from the quick option to the durable one often enough that it should be the default rather than the correction.
+
+**How to apply:** when laying out options, ask which one I would still be glad of in six months. Put that one first and recommend it. Mention the quicker one only with the specific constraint that would justify it.
+
+## Code writing rules
+
+These govern code I write: structure, contracts, comments, layout, duplication, naming, and output. They apply to every language unless a project's own conventions clearly override them — in which case match the project and tell me.
+
+### Favor the reading over the writing
+
+**When there is a choice between the code that is quicker to write and the code that is quicker to read, write the second one.** Every line is read far more often than it is written, and by then the context that made the clever version obvious is gone.
+
+In practice this decides a lot of small forks:
+
+- **Prefer the shape that removes an edge case over the shape that names it.** `is_last_attempt = attempt == count - 1` is a correctly-named boolean for a condition that should not have existed; moving the wait to the top of the loop deletes the question instead of answering it. Reach for the restructure before the explanatory name.
+- **Write a test as the question being asked.** `if file_extension(name) not in ALLOWED` reads as the question; `if not any(m in name for m in ALLOWED)` makes the reader reconstruct it. Extract the value, then compare it.
+- **Bind a constructed object to a name, then pass the name.** `upload = Upload(...)` on its own, then `planned.append(upload)` — never `planned.append(Upload(...))` with the fields spread over the lines between. Nesting a multi-line constructor inside another call buries the call being made underneath the object being built, and the reader hits a closing `))` having lost track of which paren closes what. Two statements, each doing one thing, both read at a glance.
+- **Start ranges at zero and say so.** `range(0, n)` over arithmetic that shifts the index, and never `n + 1` in a bound to compensate for a `1` somewhere else.
+- **A collection of allowed values is a list, not a tuple or a single value** — the set will grow, and a list says so.
+
+**Why:** the reader is usually me, months later, deciding whether a line is safe to change. Cleverness costs nothing to write and a great deal to verify, and the compact form is almost never the reason a program is slow.
+
+**How to apply:** after writing a block, reread it as someone who has never seen it. Any line that needs a comment to explain its *mechanics* — as opposed to its intent — is a line to restructure rather than annotate.
+
+### Function documentation — every function gets a contract
+
+Every function I write gets a short doc block at the top of its body (a docstring in Python, a comment block above the definition in shell/other languages) covering:
+
+- **What it does** — one or two lines, no more.
+- **Args** — each one by name, with its type, and anything non-obvious about accepted values.
+- **Returns** — the type and meaning on success, and what comes back on failure (e.g. `None`, `""`, empty dict, `False`) if failure is expressed as a return value.
+- **Raises** — every exception it can throw and the condition that triggers it.
+
+**All three sections are always present, even when empty — write `None` rather than omitting the section.** A function with no arguments still gets `Args: None`; one that cannot throw still gets `Raises: None`. An omitted section is ambiguous: a reader (or a doc generator) can't tell "there are none" from "the author forgot." Always-present sections also parse cleanly if we generate docs from these later.
+
+**The opening `"""` sits alone on its line** — start the summary on the next line, never on the same line as the quotes. Every block then opens and closes the same way, so the summary always starts at a predictable column and diffs stay clean when it is reworded.
+
+Keep it tight — a contract, not an essay. Example:
+
+```python
+def config_get(key, default=""):
+    """
+    Read one value from the machine-local config file.
+
+    Args:
+        key (str): config key to look up.
+        default (str): returned when the key or the config file is absent.
+
+    Returns:
+        str: the stored value, or `default`.
+
+    Raises:
+        OSError: the config file exists but cannot be read.
+    """
+
+    return config_read().get(key, default)
+
+
+def config_path():
+    """
+    Locate the machine-local config file.
+
+    Args:
+        None
+
+    Returns:
+        pathlib.Path: absolute path to the config file. Not guaranteed to exist.
+
+    Raises:
+        None
+    """
+```
+
+One-liners follow the same shape rather than collapsing to a single line:
+
+```python
+class TestConfig(SandboxedTestCase):
+    """
+    Covers config_path resolution and the config read/write round-trip.
+    """
+```
+
+**Leave a blank line after the closing `"""`,** before the first line of code — as `config_get` above does. The contract and the body are two different things, and the blank line says so.
+
+**Exception:** trivially self-describing test methods (`test_config_path_follows_xdg`, which takes no arguments, returns nothing, and raises only `AssertionError`) do not need a doc block — the name is the contract. Any test doing something non-obvious still gets one.
+
+**Why:** the contract is what a caller — including future me, and any agent editing this code — needs in order to use a function correctly without reading its implementation. Argument types and the raise list are exactly the parts that get guessed wrong, and a wrong guess about what a function throws is how error handling silently goes missing.
+
+**How to apply:** write the doc block when you write the function, not after. When you modify a function's signature, return, or exceptions, update its contract in the same edit — a stale contract is worse than none.
+
+### Inline comments — short and intentional, on the lines that are hard to read
+
+Inside a function body, add a **short comment above any line a reader would have to stop and decode**, saying in plain English what it means. One line, sentence case, no trailing period needed.
+
+Comment these:
+
+- **Dense boolean conditions** — several clauses chained with `and`/`or`, or a test whose *intent* isn't obvious from its mechanics.
+- **Non-obvious idioms** — `split(sep, 1)`, `os.replace` for atomicity, a `continue` that drops rather than skips, an argument like `maxsplit` or `exist_ok` doing load-bearing work.
+- **Anything whose consequence is invisible locally** — a line that prevents data loss, ordering that's load-bearing, a guard whose removal breaks something far away.
+
+Example — the condition is three clauses deep, so it gets one line of plain English:
+
+```python
+        # If this line is not a comment, and is the key that we are trying to set
+        if "=" in stripped and not stripped.startswith("#") and stripped.split("=", 1)[0].strip() == key:
+            if not replaced:
+                out.append("%s=%s" % (key, value))
+                replaced = True
+            continue
+```
+
+**Don't** narrate lines that already read clearly (`data = {}` needs nothing), and don't tie a comment to the ticket, migration, or task that prompted it — describe what makes the code true in general, so it stays accurate as the codebase moves.
+
+**Mechanical form of that last clause, because the judgment version failed twice:** a comment never contains a ticket ID, bug number, commit or review ID, date, or any reference to the change that introduced the code — not even as a parenthetical cross-reference like "(PROJ-123)". That is commit-message material, always. The comment states what is true of the code as it stands; `git blame` connects it to its history.
+
+**This includes the evidence that established the behaviour.** Run IDs, job numbers, dates, benchmark tables, measured figures, who agreed to it ("confirmed by <name>"), "proven on X", "originally this was Y" — none of it belongs in a comment, however hard-won. State the constraint the code has to satisfy and why, then stop: *"this format is dropped by the artifact filter"*, not *"proven on run 1234 where the manifest published and the two files it named did not"*. The evidence goes in the daily notes and on the ticket, which is where a narrative stays useful and where it can be corrected. A comment carrying a conclusion cannot be corrected by later evidence — it just sits there asserting something that has stopped being true.
+
+**Why:** the dense lines are exactly where a reader — or an agent editing later — misreads intent and "simplifies" a guard into a bug. A single plain-English line above the condition prevents that, and costs one line.
+
+**How to apply:** after writing a function, reread it and ask which lines made you pause. Those get a comment. Pair this with the doc contract above: the docstring explains the function to a *caller*, these comments explain the tricky lines to an *editor*.
+
+### Mark anything unimplemented with `XXX - TODO`
+
+**Every incomplete path carries an `XXX - TODO` comment directly above it, saying what
+is missing and why.** Not at the end of the line, not buried in a docstring — on its
+own line, immediately above the thing it is about, so it is visible when the code is
+skimmed and greppable when it is not.
+
+Use the comment syntax of whatever language you are writing:
+
+```python
+# XXX - TODO: only CSV exports are parsed; an XLSX upload is accepted but its rows
+# are never imported.
+SUPPORTED_EXPORT_FORMATS = ["csv"]
+```
+
+```c
+/* XXX - TODO: only the version 2 layout is handled; version 1 falls through and is
+ * reported unchecked rather than assumed clean. */
+```
+
+```bash
+# XXX - TODO: this assumes one timezone per account; a multi-region account would
+# need the loop below to run once per region.
+```
+
+What counts as unimplemented is wider than a missing function:
+
+- **A branch that cannot reach an answer** — a case recognised but not handled, a
+  format parsed but not verified.
+- **A value that was measured rather than derived**, where the derivation is the real
+  goal. Say that it is observed, not computed.
+- **A deliberate limitation** — one input where several are possible, a single
+  directory where the real system has three.
+
+**Say what is missing, not that something is missing.** "XXX - TODO: fix this" is
+worth nothing. "XXX - TODO: not reached at all — archived invoices live in a different
+bucket, and this job only lists the live one" tells the next reader whether the gap is
+five minutes or a week, and whether it is even the right thing to work on.
+
+**Why:** the dangerous gaps are the ones that look finished. A branch that returns
+without a verdict, a size that was eyeballed, a loop that handles the first case — all
+read as working code. The marker is what separates "this is done" from "this is as far
+as it got", and it is the only thing that makes the incomplete parts of a program
+findable without reading all of it. `grep -rn 'XXX - TODO'` should be a complete
+inventory of what is left.
+
+**How to apply:** when you write a path that cannot reach an answer, mark it in the
+same edit — not afterwards, because afterwards does not happen. When you finish one,
+delete the marker in the same change that finishes it. Where the language allows it,
+make the convention enforceable rather than a discipline: a test that walks the cases
+and asserts every dead end carries a marker will catch the one you forget.
+
+### Code layout — align assignments, break stanzas with blank lines
+
+Two rules, both visible here: **align the `=` in a run of consecutive assignments** so the values form a column, and **separate trains of thought with a blank line** even inside a short function.
+
+```python
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines    = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    out      = []
+    replaced = False
+```
+
+not
+
+```python
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    out = []
+    replaced = False
+```
+
+The first two lines locate and prepare the file; the next three set up the rewrite. Different thoughts, so they get their own stanzas. Don't blank-line between every statement — group by intent.
+
+- Align only within a **contiguous run** of assignments — a blank line, a comment, or any non-assignment statement ends the run and starts a new alignment group. Never align across a blank line.
+- Pad with **spaces**, never tabs.
+- If one name is far longer than the rest and alignment would push values absurdly far right, split the run with a blank line instead of stretching every line to match.
+- The same applies to other aligned runs where it aids reading: consecutive dict entries, trailing `\` continuations, or repeated keyword arguments.
+
+**Why:** aligned values scan as a column, so a reader takes in the whole block at once instead of parsing each line, and a wrong value stands out immediately. Stanza breaks tell the reader where one idea ends and the next begins without needing a comment to say so.
+
+**How to apply:** after writing a function, look at it as a shape, not just as statements — align each run of assignments, and insert a blank line at each change of subject. Note this deliberately conflicts with PEP 8's E221 ("multiple spaces before operator"); if a linter or formatter is in play, configure it to allow this rather than reformatting against it — and tell me if a project's autoformatter makes that impossible.
+
+### Name a value when the name earns its keep
+
+Don't hardcode a value **when doing so makes the code less readable, or means a future change has to touch several places.** That is the test — not "never write a literal."
+
+Name it when at least one is true:
+
+- **The bare literal doesn't say what it means.** `return 3` tells a reader nothing; `return ExitStatus.NO_KNOWN_AGENTS` does. Exit statuses, error codes, limits, timeouts, retry counts, ports, and file modes are usually in this bucket.
+- **It appears in more than one place**, or one copy must change whenever another does. Two copies drift; that's the whole problem.
+- **A typo in it would fail silently** rather than loudly — a string compared against in a branch that would simply never fire.
+
+Leave it inline when none of that holds:
+
+```python
+# Naming these gains nothing — the constant just restates the string, and the
+# only place it appears is the line that defines what the string means.
+SUPPORTED_AGENTS = (
+    SupportedAgent(name="claude", root=RulesRoot.HOME, relpath=(".claude", "CLAUDE.md")),
+    SupportedAgent(name="codex",  root=RulesRoot.HOME, relpath=(".codex",  "AGENTS.md")),
+)
+```
+
+`AGENT_CLAUDE = "claude"` used once, in the table that defines it, is indirection with no payoff: a reader now has to look up a name to learn a value that was already in front of them. Same for self-evident values — `i + 1`, `x[0]`, `count == 0`, an empty string.
+
+**When a branch keys off a literal, prefer moving the trait onto the data** over naming the literal. `if agent.name == CURSOR:` asks *which agent is this*; `if agent.needs_manual_paste:` asks *what is true about it* — and adding a second such agent then requires no code change at all.
+
+**Why:** the point is future edits landing in one place and a reader understanding a line without leaving it. A constant that serves neither is just a second name for the same thing.
+
+**How to apply:** before hoisting a literal, ask what breaks if it stays inline. If the honest answer is "nothing," leave it.
+
+### Structure first — a class for the shape, a function for the step
+
+**Default to a class for any group of values that travel together, however small and however one-off it looks.** A dict literal with named keys, a tuple that callers unpack positionally, or three parallel lists indexed in step are all a class that has not been written yet. Write the class.
+
+**Default to a function for any step that could be called twice**, even if today it is called once. "Might be reused" is enough; waiting for the second caller means the second caller copies the first.
+
+**But a one-liner is only a function when its name reads more clearly than the operation does.** That is the whole test, and it cuts both ways:
+
+- `url_basename(url)` earns it — `url.rsplit("/", 1)[-1]` does not say what it means, so the name is the explanation and the reader never has to decode the mechanics again.
+- `record_staged(entry)` does not — `entries.append(entry)` already says exactly that, and wrapping it buys a name that is no clearer, a docstring longer than the body, and one more hop before the reader finds out that all it does is append.
+
+Appending to a list, incrementing a counter, and returning a field are not steps. Wrapping them turns readable code into a scavenger hunt: three lines of logic become three definitions to open, and the shape of the loop stops being visible in the loop.
+
+**Why:** hiding a trivial operation behind a name is a cost with no benefit — it does not aid reuse, because the operation was already one call, and it does not aid reading, because the name says no more than the code. The result is a file where finding out what happens means following calls that turn out to do nothing.
+
+A class is not just a bag of fields. **The operations that only make sense on its data belong on it** — building it from raw input, deriving a value from its own fields, serialising it, summarising it. A field that can be computed from the others is a property, not stored state, so the two cannot disagree.
+
+The tells that a class is overdue:
+
+- The same set of keys is constructed by hand in more than one place, or the shape is only written down in the consumer.
+- A function threads four or five loose accumulators through a loop and then through its output.
+- A return value needs prose to explain which combination of its fields means what.
+
+**Why:** structure is where the contract lives. When the shape exists only as a dict literal, every consumer re-derives it, nothing declares it, and a renamed key fails somewhere far away and much later. It also compounds: the objects I skipped writing at the start were exactly the ones later needed to say what had gone wrong.
+
+**How to apply:** write the class when the values first travel together, not once the function gets long. If it feels too small to deserve a class, that is the moment — it will not shrink.
+
+### Don't write the same code twice
+
+If two functions do the same thing and differ only in *what* they operate on, they are one function with a parameter — not two functions. Same for near-identical blocks inside a function: lift the shared logic and pass the difference in.
+
+- Two bodies whose diff is only a constant, a marker, a path, or a field name → one function taking that as an argument.
+- If the two differ in *behavior* as well, pass that as an explicit flag or strategy rather than forking the body — and name the flag after the behavior, not the caller (`last_end=True`, not `for_local=True`).
+- If collapsing them would need more than about two flags, that's the signal they genuinely are different functions. Say so rather than contorting one.
+
+**Why:** duplicated logic drifts. A bug gets fixed in one copy and not the other, and the two slowly stop agreeing — which is exactly the kind of divergence nobody notices until it produces wrong output.
+
+**How to apply:** when writing a second function that feels like one you just wrote, stop and diff them in your head. If the difference is data, parameterize it. When you inherit duplicated code while working nearby, collapse it as part of that change rather than adding a third copy.
+
+### Boolean names are questions
+
+A boolean's name should read as a yes/no question that `True` and `False` answer. Prefix it: `is_`, `has_`, `should_`, `will_`, `can_`, `was_`, `needs_`, `did_`.
+
+- Good: `should_repeat`, `should_use_last_end`, `is_bad_block`, `has_local_rules`, `will_continue`, `needs_rebuild`, `was_replaced`.
+- Bad: `repeat`, `last_end`, `flag`, `mode`, `status`, `check` — these read as nouns or data, so a call like `f(x, True)` or `if mode:` gives the reader nothing.
+
+This matters most at **call sites and in conditions**, where the name is often all you see: `strip_block(text, b, e, should_repeat=True)` is self-explaining; `strip_block(text, b, e, repeat=True)` is only nearly so, and `strip_block(text, b, e, True)` is unreadable.
+
+**Name the positive.** `is_enabled` beats `is_not_disabled`; double negatives (`if not is_not_ready`) are where logic bugs hide. If the natural reading is negative, flip the name and flip the branches.
+
+**"Almost always" is doing real work here — config and data fields can opt out.** A settings key I read in a JSON/YAML file is a labelled value, not a call-site argument, and the plain form often reads better: `notes_enabled: false` beats `are_notes_enabled: false`. Keep the question form for parameters, locals, and anything whose meaning is ambiguous at a call site; use judgment for user-facing field names, and don't rename an existing one just to satisfy the rule.
+
+**Why:** a boolean is a question by nature — the name should say which one. When it doesn't, every reader has to open the function to find out what `True` means, and that is exactly how someone passes the wrong one.
+
+**How to apply:** when you write a boolean parameter, variable, or field, say it aloud with "is it?" or "should it?" in front. If that doesn't parse as a sentence, rename it. Applies to function parameters, locals, and struct/dict fields alike.
+
+### Order a file so a reader meets every helper before its caller
+
+**A source file reads top to bottom: detail first, entry point last.** The last line
+of an executable file is the one that starts the program, the function it calls sits
+immediately above it, and every helper appears before whatever calls it.
+
+```python
+# imports
+
+def parse_one_record(line): ...      # the detail
+def load_records(path): ...          # calls parse_one_record
+def build_parser(): ...              # the interface
+def main(): ...                      # calls build_parser and load_records
+
+if __name__ == "__main__":           # the last line in the file
+    sys.exit(main())
+```
+
+Not a Python rule — the same ordering applies in any language that does not force
+declaration order. In C the definitions go in the same sequence beneath the
+prototypes; in shell, functions precede the line that invokes them (which the
+interpreter requires anyway).
+
+**Why:** reading a file straight down should never require jumping forward to find
+out what something does. When a helper sits below its caller, the reader hits a name
+with no meaning yet and has to search — and in a long file they scroll past the
+entry point entirely, which is the one function that says what the program is. Ending
+on `if __name__ == "__main__"` also makes "where does this start?" answerable by
+jumping to the bottom, in every file, without looking.
+
+**How to apply:** when you add a function, place it above its first caller rather
+than at the end of the file. When you find a file already out of order, reorder it as
+part of the change you are making there — the diff is pure movement and reviews
+quickly. Pair this with the `main()` rule below: `main` is a table of contents, and it
+belongs directly above the line that calls it.
+
+### `main()` only calls other functions
+
+`main` is a table of contents, not a chapter. It reads arguments, dispatches, and returns an exit status — every step it takes is a call to a named function. No parsing, no `try`/`except` around real work, no loops, no printing beyond what a one-line call does.
+
+```python
+def main(argv):
+    """
+    ...
+    """
+
+    command = command_from(argv)
+
+    if command in ("-h", "--help"):
+        return show_usage()
+
+    if command != "apply":
+        return reject_command(command)
+
+    return run_apply()
+```
+
+Anyone opening the file should learn what the program does from `main` alone, then read only the branch they care about. When logic accretes there instead, the entry point becomes the one function nobody can skim — and the one nobody can test, because exercising any branch means running the whole program.
+
+**How to apply:** after writing `main`, check that every line is a call, a comparison, or a `return`. If a step needs a comment to explain what it does, that step wants to be a function whose name says it instead. The same discipline is worth applying to any dispatcher or top-level handler, not just a literal `main`.
+
+### Be operator-resistant — validate every input before doing any work
+
+**Check every input the program depends on, up front, and refuse to run when one is
+missing.** Not the first one. Not the ones you remember. Every one.
+
+Three parts, and the third is the one that gets skipped:
+
+- **Required inputs** — confirm each one exists and is usable *before* starting work.
+  A path that is not there, a file that will not parse, a directory that is empty:
+  say which one, and say it in terms of the thing that is actually wrong. "X does not
+  exist" beats a downstream symptom like "no results found".
+- **Optional inputs** — validate them too, and when one is absent **report what
+  stops working because of it**. Not "config not found" but "config not found, so
+  every per-user override is disabled". The reader cannot infer the consequence.
+- **Refuse rather than degrade.** A run missing an input still produces output, and
+  that output is indistinguishable from a clean run — the results it could not
+  produce are simply absent. Nobody reading it can tell which. Exit with a distinct
+  status so a caller can tell "did not run" from "ran and found nothing".
+
+**Assume the operator is in a hurry and will pass the wrong path.** They will point
+at the top of a checkout instead of the subdirectory, typo a flag, or run in a tree
+where half the inputs were never generated. Every one of those should produce a
+sentence naming the problem, not a confident empty report.
+
+**Why:** silent degradation is the worst failure a tool can have, because it is
+invisible at exactly the moment someone is trusting it. A scanner that checks
+nothing and a scanner that finds nothing print the same thing. A backup script given
+the parent directory instead of the project finds no config file, falls back to
+its defaults, and reports "0 files changed" every night — with no indication
+anything is wrong.
+
+**How to apply:** enumerate inputs mechanically rather than from memory — grep the
+source for every file read, path glob, environment variable and argument, then diff
+that list against what the program validates. Memory misses things; the audit does
+not. Do that sweep whenever an input is added, and write the validation in the same
+change that introduces the dependency.
+
+### Log / print message style
+
+When adding print or log statements in code, prefer this prefix scheme:
+
+- `[*]` — informational ("starting setup", "reading config from X", "here is the manual step left to do")
+- `[+]` — success ("package installed", "all containers stopped")
+- `[-]` — failure ("could not open file", "rc=1 from pg_dump", "skipped X, so it did not get written")
+- `[!]` — **almost never.** Reserved for something that needs ALL of our attention: an irreversible action, a data-loss risk, a corrupted or destroyed file, a state that will silently mislead us if ignored.
+
+**`[-]` is what you want for a normal failure.** Anything that failed, was skipped, or didn't get done is `[-]`, not `[!]` — including partial failures and warnings. If a message can be summarized as "this thing didn't work," it is `[-]`.
+
+**`[!]` is not "extra important."** Before using it, ask: would I want this to stop the reader cold, even mid-scroll through a thousand-line log? If the honest answer is no, it is `[*]` or `[-]`. A log where `[!]` appears routinely has no way left to say "this one actually matters."
+
+**Match the surrounding codebase first.** If the project already has its own convention (e.g. `[INFO]`/`[WARN]`/`[ERROR]`, a Python `logging` module, colored bash helpers, structured JSON logs), conform to that. Mixing styles inside one codebase is worse than not tagging at all. Only use `[*][+][-][!]` for new codebases or codebases with no established logging convention.
+
+**Why:** Tagged output reads at a glance, greps cleanly, and surfaces failure quickly in long CI logs. The "match existing first" rule prevents two inconsistent styles in the same project from a single contributor.
+
+**How to apply:** Before writing a new print/log line, scan a nearby file for existing tag conventions. If one exists, use it. If none exists, use `[*][+][-][!]`.
+
+### Language-specific rules
+
+Everything above applies in any language. Everything below applies only to the language it names. Where a language has no section here, no convention has been set beyond the general rules — follow those, match the surrounding project, and ask rather than inventing one.
+
+**Python — always argparse.** Any program that reads command-line arguments uses `argparse`, even for a single positional. Do not hand-roll `sys.argv[1] if len(sys.argv) > 1 else ...`, and do not hand-write `--help` or the unknown-command error. Hand-rolled parsing starts small and quietly grows: no `--help`, no usage on error, no exit status convention, no room for a flag.
+
+- Use **subparsers with `set_defaults(run=<function>)`** for a command-style tool, so dispatch is `args.run()` and `main` never re-checks the command name.
+- Set `prog` and `description` — they become the `--help` text.
+- Let argparse own usage errors. Its `prog: error: ...` format and exit status 2 are the recognized convention for a bad command line; the `[*] [+] [-] [!]` tags are for our own log lines. Subclassing just to re-tag argparse's message is machinery for nothing.
+- Call `parse_args()` with no arguments and let it read `sys.argv` — don't thread an `argv` parameter through `main` unless something actually calls `main` with a custom vector.
+- The parser belongs in its own function that returns it. Building and parsing in `main` puts logic back in the one place that should hold none.
+
+**Python — f-strings, and keep the message at the call site.** They put the value where it is read, instead of leaving the reader to match a placeholder against an argument tuple somewhere to the right.
+
+```python
+print(f"[-] no known agents configured, nothing was written (valid: {valid})", file=sys.stderr)  # yes
+print(NO_AGENTS % valid, file=sys.stderr)                                                        # no
+```
+
+The second line is the failure mode: pulling the text out to `NO_AGENTS = "..."` means the call site no longer says what gets printed — not even whether it is an error or a success. Write the message where it is emitted. Reach for a constant only when the same text is genuinely emitted from several places, or when it is data rather than prose (a usage string, a template a caller supplies).
+
+- Use `{value!r}` where quoting matters, so a typo like `'claud'` reads as a value rather than as prose.
+- Keep any `[*] [+] [-] [!]` tag literally in the f-string, so a reader sees the severity without following a name.
+- `%`-formatting and `.format()` are fine in code that already uses them consistently — match the file rather than mixing styles.
+
+**Python — `print`, not `sys.stdout.write`.** `print` handles the newline, reads as intent, and goes to stderr just as easily: `print(msg, file=sys.stderr)`. Writing to the stream directly only earns its keep when you need byte-exact control — a partial line, a progress display overwriting itself with `\r`, or binary output. Emitting whole lines is not that, so reach for `print` by default and don't hand-manage `\n`.
+
+**Python — note on the layout rule.** Aligning `=` deliberately conflicts with PEP 8's E221 ("multiple spaces before operator"). Configure the linter or formatter to allow it rather than reformatting against it, and say so if a project's autoformatter makes that impossible.
+
+**C** — no conventions set yet beyond the general rules.
+
+**Bash** — no conventions set yet beyond the general rules.
+
+**Rust** — no conventions set yet beyond the general rules.
+
+## Saving a memory — decide global first, and default to global
+
+Some agents keep a per-session or per-project memory (Claude Code writes one under `~/.claude/projects/<project>/memory/`). **That memory does not travel.** It is one directory on one machine, so a preference saved there reaches whichever session happens to be running in that project, on that machine, and nothing else. These rules travel: they assemble into every agent's rules file on every machine that runs `ai-rules apply`.
+
+So before saving anything to a memory, ask **"is this only true here?"** If it is not, it belongs in the rules — and most of the time it is not:
+
+| The thing | Where |
+|---|---|
+| How I want work done, anywhere — cadence, style, what to check before committing | `ai/rules/misc.md` |
+| Anything naming an employer, an internal host, a codename | the private layer |
+| A fact about *this repo only* — a path, a quirk, a decision that dies with the project | a memory is fine |
+
+**Never save to a memory because it is the quicker option.** Editing the repo means a commit; a memory is one file write. Taking the shortcut is how a standing instruction ends up applying on one machine while the others carry on doing the thing I asked to stop, with nothing anywhere saying why they differ. That has already happened: a rule about verification cadence lived only in one machine's project memory, and a session elsewhere found out about it by chance, from a daily note that mentioned it in passing.
+
+**If a memory already holds something that should be global, move it** — put it in the right module, run `ai-rules apply`, and delete the memory file and its `MEMORY.md` line. Two copies is worse than either one, because they drift and nothing reconciles them.
+
+## Adding to any list I keep — read it first, then place the item
+
+Whenever you add an item to a list I maintain — a TODO list, a tracker, a
+checklist, a set of rules — **read what is already there before writing.** Then:
+
+- **Reconcile against it.** If the new item overlaps something already on the
+  list, that is not a new entry. Update the existing one **in place**, keeping
+  whichever wording is more accurate and folding in what is genuinely new.
+- **Place it deliberately.** Put it where it belongs in the list's own order —
+  by priority, by section, next to the item it relates to. Never default to
+  appending at the bottom because that is the easy edit.
+- **Retire what the new item supersedes.** If adding this makes an older entry
+  wrong or dead, say so and remove it in the same edit. Two entries that
+  disagree is worse than either one alone.
+
+**Never rewrite history to do it.** A dated or archived record says what was
+true when it was written; leave it exactly as it is, even when later events
+proved it wrong. Reconcile the *live* view instead — for notes that means
+`current/<project>.md` and today's dated file are fair game and every earlier
+dated file is not. Anything already committed, sent, or filed is history too.
+
+**Why:** a list that only ever grows stops being read, which defeats the point of
+keeping it. The failure mode is concrete. A task appended without reading the list
+first sits next to an older copy with a different diagnosis, and the
+already-corrected one looks exactly as current as the right one. A list where
+finished work far outnumbers open work hides the few items that matter.
+
+**How to apply:** before adding, read the whole list. Ask "is this already here in
+another form?" If yes, edit that entry. If no, decide where it goes rather than
+where the cursor is. Applies to the two specific cases already covered below and
+in the daily-notes rules — this is the general form, not a replacement for either.
+
+## Verification cadence — batch it at the boundaries
+
+Run the full test suite and any mutation sweep **at a commit boundary or before a big feature**, not after every exchange. While iterating, run only the test file covering what changed.
+
+- **Never re-run against a tree that has not changed.** A fast-forward merge produces byte-identical content; verifying the result means checking which files are present, not running the suite again.
+- **Scope a sweep to the affected test file** where that is enough. A sweep is N full suite runs, so scoping it is the difference between seconds and half an hour.
+- **Say when a suite is slow and why**, and offer to make it cheaper, rather than absorbing the cost silently on every run.
+
+**Why:** most of a slow merge can be two full suite runs, the second one against identical files. The sweeps do find real defects and are worth running — just not on every turn.
+
+**How to apply:** during iteration, the one relevant test file. Before committing, the suite once and a sweep once. If most of a suite's time is subprocess spawning, name that as the reason rather than treating it as fixed cost.
+
+## Commit review gating
+
+Before making any git commit, show me the diff and the proposed commit message, and wait for explicit approval. Even if I have asked you to commit, do not run `git commit` until I review.
+
+**Workflow:**
+
+1. Make the requested changes (file edits, etc.).
+2. Stage what should be committed: `git add <files>`.
+3. Show me `git status` and `git diff --staged`, plus the proposed commit message.
+4. Wait for me to say "go ahead" / "yes" / "commit it" or to give feedback.
+5. Only then run `git commit`.
+
+This applies to every commit, even if I authorized commits at the start of the work. It does not apply to non-commit git operations (status, diff, log, show) or to file edits, which you should proceed with normally. It does not apply to revertible scratch state like stashing.
+
+**Stage as you go, not only at a commit boundary.** When you finish an edit I asked for, `git add` it in the same turn. The staged diff is what I read when I review, so an unstaged edit is one I cannot see — I have read a stale diff and asked why a change was missing when the file on disk was already correct. Staging is not permission to commit; the gate above is unchanged. Leave anything I have deliberately left unstaged alone (say so and ask, rather than sweeping it in), and never stage in a checkout that is not the one you were working in.
+
+**Why:** Catching issues before they land in history — wrong files staged, sensitive content, a commit message that does not match what changed, a commit that should have been split or squashed. Once a commit is made (especially if pushed), fixing it requires history rewrites, which are noisy and sometimes destructive.
+
+**How to apply:** Treat "commit this" or "let's commit" as authorization to *prepare* a commit. Show the staged diff and proposed message, then wait. If I approve, commit. If I ask for changes, adjust and re-show. If I am clearly mid-flow and would obviously want a single commit at the end (e.g. you finished a multi-step refactor I scoped), still pause for review at the commit boundary.
+
+## Scan for leaks before committing to a public repository
+
+Anything pushed to a repository the public can read is permanent in practice. A
+history rewrite breaks every clone, and the orphaned commits stay reachable by
+SHA on most forges — and in every fork — long after the branch stops pointing at
+them. So the check belongs *before* the commit, not after the discovery.
+
+**Run the leak scanner against the staged changes before every commit to a
+public repo.** It is installed as a `pre-commit` hook, so in practice this is
+automatic; the rule exists for the cases where it is not — a fresh clone, a new
+machine, or a repo where the hook was never installed. Extends the commit review
+gating above: the scan happens at step 2, before you show me the diff.
+
+What counts as a leak is broader than credentials:
+
+| Kind | Examples |
+|---|---|
+| Secrets | keys, tokens, certificates, credentials in a URL |
+| Identity | usernames, real names, email addresses and their domains |
+| Infrastructure | internal hostnames, private addresses, employer domains |
+| Layout | absolute paths through a home directory, site-specific mount roots |
+
+**The scanner's own pattern list is itself sensitive** — a curated inventory of
+everything being hidden is worse than any single stray mention. So the
+identifying half lives outside every repository and is generated per machine;
+only shape-based secret patterns are ever checked in. Never paste raw scanner
+output anywhere less private than the machine it ran on, and never commit a
+pattern file.
+
+**Why:** identifying detail rarely arrives in a commit that looks like it is
+about identity. It rides along in a path used as an example, a hostname in a
+usage line, a default in a config snippet — none of which read as sensitive
+while you are writing them. A mechanical check catches what review does not,
+because it is not relying on anyone noticing.
+
+**How to apply:** on a new machine or a fresh clone of anything public, install
+the hook before the first commit. If the scanner is unavailable, say so and
+scan by hand rather than committing unscanned. Treat a finding as blocking
+unless I say otherwise; `--no-verify` is mine to invoke, not yours.
+
+## Unauthenticated MCP servers — tell me to re-auth, don't quietly work around it
+
+**Any time a task could be helped by an MCP server that is unauthenticated, disconnected, or missing its
+tools, say so immediately and ask me to re-auth it.** Do not silently fall back to a worse method, and do
+not simply report the capability as unavailable and stop.
+
+This applies whenever the server *could* help — not only when it is strictly required. If an MCP server
+would let you check a job, query a database, read a bug, fetch a page, or verify a claim directly, and it
+is not currently usable, tell me before proceeding by other means.
+
+Say which server it is, what you would do with it, and how I re-auth (`/mcp` in an interactive session,
+`claude mcp`, or claude.ai connector settings for claude.ai connectors). Then either wait, or continue with
+the degraded approach **while clearly flagging what you could not verify** — never let the gap go unmentioned.
+
+**Why:** re-auth takes me seconds, and without it work silently degrades — hand-run commands instead of
+tool calls, guesses instead of verified facts, or a step that stalls entirely. I would rather spend ten
+seconds re-authenticating than get an unverified answer or discover later that something was blocked.
+
+**How to apply:** when a tool you want is unavailable, surface it in that turn as a concrete request
+("re-auth `<server>` and I can do X directly"), not as a footnote or an apology at the end. If several are
+unavailable, list them together so I can fix them in one pass.
+
+## Bug work and anything I send to a person — load the skill first
+
+Triaging, filing, updating or discussing a bug, or drafting anything that goes
+out as me (a bug comment, chat message, email, MR/PR description, review
+comment): **invoke the `bug-and-comms` skill before writing any of it**, plus
+`bug-and-comms-local` where a private layer installs one.
+
+That is where the evidence standard, the root-cause presentation, the register I
+write in, and the who-sends-what split now live. They are not repeated here —
+they were ~150 lines loading on every prompt for work that is occasionally about
+a bug.
+
+**Why the trigger is a rule and the content is not:** a skill only applies if it
+gets loaded, and this is exactly the kind of guidance that must apply without
+being asked for. The line stays push so the content can be pull.
+
+## Links — always full raw URLs, never inline/masked
+
+Always show links as the **full raw URL**, starting with `https://` (or `http://`) — visible, copyable, complete to where it goes. **Never** a markdown-masked inline link like `[text](url)`, and never a bare ID.
+
+- YES: `job: https://ci.example.com/showjob.php?job=12345`
+- NO: `[12345](https://ci.example.com/showjob.php?job=12345)` or bare `job 12345`
+
+**Why:** markdown link syntax doesn't render in most places I paste into (bug trackers, Slack, email, plain text), and I want to see and copy the actual destination, not a masked link. Reinforces "make links clickable and durable — full URLs, not bare IDs."
+
+**How to apply:** in ALL output — your replies to me and anything I'll send (bug descriptions/comments, Slack, email, MRs) — write the full URL, never a masked `[text](url)` and never a bare ID. This overrides the harness default of formatting links as markdown.
+
+## Where to put files you create — never in `~`
+
+**Never create files _or directories_ directly in my home directory (`~`).** It is not a dumping ground; anything left there is clutter I have to find and clean up later. A new folder is not an exception to this — it is the worst case of it, because it looks organised while still being somewhere I never asked for.
+
+Pick the destination by what the file is for:
+
+- **Temporary / working files** (intermediate output, throwaway scripts, scratch data, downloaded logs) → the session scratchpad directory. Never `~`, never `/tmp` unless I ask.
+- **Deliverables and anything I might open, keep, or share** (generated HTML/PDF, diagrams, exported tables, one-off documents) → **`~/Documents/`**, unless I named a path.
+- **A written report is the exception — it goes in the notes repo**, at `<notes>/reports/<project>/<YYYY-MM-DD>/`, per the daily-notes rules. A report has to reach my other machines and `~/Documents/` syncs nowhere. On an unattended box `~` is read-only, so `~/Documents/` there is not merely wrong, it fails.
+- **Bulk artifacts I might want later but will not read as documents** (database dumps, backups
+  taken before a risky change, large downloaded archives) → **`~/Downloads/`**. These are neither
+  disposable nor documents: a backup that disappears with the scratchpad is not a backup, and it
+  does not belong in `~/Documents/` either.
+- **Project files** → inside that project's repo/working directory, in the directory the project's conventions imply.
+- If a file belongs to an established location I already use (e.g. daily notes, a repo's `docs/`), put it there rather than inventing a new spot.
+
+**Why:** files dropped in `~` get lost among dotfiles and system directories, are easy to forget, and clutter the one directory I look at most. `~/Documents/` is where I actually look for documents, and the scratchpad keeps disposable work out of the way entirely.
+
+**How to apply:** before writing a file **or creating a directory**, ask "is this disposable or is it a deliverable?" Disposable → scratchpad. Deliverable → `~/Documents/` (or the project). If neither fits and you're unsure where it belongs, ask me instead of defaulting to `~`. When you do create a deliverable, tell me the full path.
