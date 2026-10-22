@@ -1,75 +1,100 @@
 ---
 name: adversarial-review
 description: >-
-  Use when checking a finished piece of work by trying to break it, before it
-  is called done or shown for review: a branch, a diff, a report
-  with numbers in it, or a plan. Sends independent reviewers with fresh context
-  to attack it from several angles, keeps only findings with a concrete way to
-  fail, then tries to disprove each one before reporting it. Fires on:
-  adversarial review, try to break this, review this before I look, red-team
-  this, check this change, is this actually right.
+  Use for an outside, no-context review that tries to prove the work is broken,
+  messy or off course. Two scopes: a whole project (is it on track for its
+  north star, working, clean, readable, consistent and up to date?) or one
+  change (a branch, a diff, a report, a plan). Sends fresh reviewers that know
+  only the goal, keeps only findings with a concrete failure, and attacks each
+  finding before reporting it. Fires on: adversarial review, review the whole
+  project, is this project on track, try to break this, red-team this, review
+  this before I look, style pass, is this actually right.
 ---
 
 # Adversarial review
 
-The author of a change is the person least able to see what is wrong with it.
-The same is true of an agent in the context that wrote it, which has already
-convinced itself. This skill reviews from **outside** that context, and assumes
-the work is wrong until a check fails to break it.
+Whoever built something is the worst judge of it: they read what they meant,
+not what is there. This review is done by **outsiders**. They know where the
+project is meant to be going, they do not know why anything was done the way
+it was, and their job is to find out what is wrong.
 
-## Rules
+It is wholehearted: correctness, direction, cleanliness, readability, style
+and freshness all at once. A review that only checks that the tests pass
+cannot tell a clean project from one that passes its tests while drifting.
 
-- **Never review in the context that wrote the work.** Use subagents. Give
-  them the change and the goal it was meant to meet. Do not give them the
-  author's reasoning: they should judge what was written, not what was meant.
-- **Every finding needs a failure scenario**: a specific input, state or
-  sequence of steps, and the wrong result it produces. "This could be fragile"
-  is not a finding.
-- **Every finding is attacked before it is reported.** A second pass tries to
-  disprove it by reading the code, running it, or checking the source. Only
-  `CONFIRMED` (shown to fail) and `PLAUSIBLE` (not disproved, and the failure is
-  realistic) survive.
-- **Severity order**: wrong output, data loss, and silent failure come first.
-  Style comes last, and only when it breaks one of the user's written rules.
+## Ground rules
+
+- **Reviewers start with no context.** Each one is a fresh subagent. It gets
+  the scope, the north star, the user's written code rules, and how to run the
+  tests. It does not get the conversation, the author's reasoning, or earlier
+  reviews. Knowing why something was done is how a reviewer starts excusing it.
+- **Every finding needs a failure scenario**: an input, state, reader or
+  future change, and the concrete bad result. "Could be cleaner" is not a
+  finding. "A reader changing the timeout edits one of two copies and the
+  other silently keeps the old value" is.
+- **Every finding is attacked before it is reported.** A second subagent tries
+  to disprove it by reading the code, running it, or checking the source. Only
+  `CONFIRMED` (shown) and `PLAUSIBLE` (not disproved, and realistic) survive.
+- **Run things; don't just read them.** Run the tests, the build, each entry
+  point's `--help`, and a sample of the documented commands. A README command
+  that fails is a finding.
+- **Report the state that was reviewed.** Name the commit or the time. A clean
+  result describes that state and nothing after it.
+- **The review changes nothing.** Fixing is a separate step, decided by the user
+  or by the run that asked for the review.
+
+## Scope
+
+| Scope | When | Reviewers |
+|---|---|---|
+| **Project** | on request, at a milestone, before a release or handover, or when the work feels off course | every lens below, in parallel |
+| **Change** | a branch, a diff, a report or a plan, before it is called done | the lenses that apply; one reviewer for a small change |
+
+For a change, the reviewers still read the code around it. A change that is
+correct in itself can still duplicate something that already exists two files
+away.
 
 ## Lenses
 
-Pick the lenses that fit what is being reviewed. One reviewer for a small
-change; three or more in parallel for anything large or risky.
-
 | Lens | The reviewer tries to show |
 |---|---|
-| **Correctness** | an input or state that gives a wrong result, a crash, or an edge case that is not handled |
-| **Silent failure** | a path that does nothing and still reports success, an input that is missing but not checked, an empty result that cannot be told apart from a clean one |
-| **Tests** | that the tests would still pass if the change were broken: mutate the key line and see whether any test fails |
-| **Contract and rules** | a break with the user's code rules or the project's conventions: doc contracts, naming, layout, logging tags, no AI attribution, no internal names in public repositories |
-| **Scope** | changes nobody asked for, things removed that were in use, or anything the plan said it would do that it did not |
-| **Numbers** (reports) | a figure that does not match its source, a before or after with no date, a claim worded more strongly than the evidence supports |
-| **Plan** (plans) | an item that needs a decision nobody has made, a "done when" that cannot be checked, or a step that would publish something |
+| **Direction** | work that serves no part of the north star; a part of the north star the project has quietly stopped serving; TODOs or plans that contradict the north star or each other; effort going into polish while a core measure is stuck |
+| **Broken** | a test, build or documented command that fails; an input or state that gives a wrong answer or a crash; an edge case that is not handled |
+| **Silent failure** | a path that does nothing and reports success; a missing input that is not checked; an empty result that looks the same as a clean one |
+| **Duplication and rewriting** | the same logic in two places; a new helper that reimplements one that exists; two ways of doing one job (two config readers, two HTTP clients, two date formats); code copied instead of shared |
+| **Dead and stale** | unused code, flags, files and dependencies; comments that describe code that has since changed; `XXX - TODO` markers for work that is done, and unfinished paths with no marker |
+| **Readable** | a function a newcomer cannot follow in one pass; a name that says the wrong thing; a dense line with no comment; a file whose order makes the reader jump around; `main` doing work instead of calling it |
+| **Style and rules** | breaks of the user's written code rules and the project's own conventions: contracts, layout, naming, logging tags, argument parsing, file placement |
+| **Tests** | tests that would still pass if the code were broken: mutate a key line and see whether anything fails; behaviour with no test; tests that check the mock instead of the code |
+| **Up to date** | a README, usage text, docs or notes that no longer match the code; examples that do not run; dependencies or pinned versions that are stale or vulnerable |
+| **In one place** | configuration, constants or knowledge scattered across files, notes and scripts; a fact recorded in two places that already disagree |
+| **Safe to publish** | secrets, internal names, personal paths or anything identifying in a repository others can read |
+| **Numbers** (reports) | a figure that does not match its source, a before or after with no date, a claim stronger than its evidence |
+| **Plan** (plans) | a decision nobody has made; a "done when" that cannot be checked; a step that writes over the network without approval |
 
 ## Procedure
 
-1. **Frame it.** Collect the diff (or the document) and the goal: the plan
-   item, the ticket, or the user's request. Note how to run the tests.
-2. **Send the reviewers.** Run one subagent per lens, in parallel. Each one
-   returns findings with a file and line, a one-line summary, and a failure
-   scenario.
-3. **Verify.** For each finding, run a separate check that tries to refute it.
-   Drop anything that is refuted. Mark the rest `CONFIRMED` or `PLAUSIBLE`.
-4. **Report.** If the `ReportFindings` tool is available, use it, ranked most
-   severe first. Otherwise use one table:
+1. **Frame it.** Write a one-page brief for the reviewers: the scope (repository
+   and commit, or the diff), the north star from `current/<project>.md`, the
+   current plan if one exists, where the user's code rules live, and how to
+   build and test. Nothing else.
+2. **Review.** Run one subagent per lens, in parallel. Each returns findings with
+   `file:line`, a one-line summary and a failure scenario.
+3. **Attack the findings.** For each finding, run a separate subagent that tries
+   to refute it. Drop the refuted ones. Merge duplicates found by several lenses.
+4. **Report.** Start with one verdict per lens: **on track**, **drifting** or
+   **broken**, each with a one-line reason. Then list the findings, most severe
+   first: wrong results and silent failures, then direction, then duplication
+   and staleness, then readability and style. Use `ReportFindings` if it is
+   available; otherwise one table:
 
-   | # | Severity | Where | What fails | Scenario | Verdict |
+   | # | Lens | Where | What fails | Scenario | Verdict |
    |---|---|---|---|---|---|
 
-   If nothing survives, say so plainly and list the lenses that were run.
-   Calling something clean without saying what was checked claims more than
-   the review showed.
-5. **Fix and review again** (in an unattended run, or when asked). Fix the
-   confirmed findings, then run one more review pass on the fix only. Report
-   whatever is still standing; do not loop until the reviewers give up.
-
-## What this is not
-
-It is not a style pass, and it does not replace the user's own review. A clean
-result is a reason to show the work, not to merge it.
+   When a lens finds nothing, say what it checked. "Clean" without the list of
+   checks claims more than the review showed.
+5. **Hand off.** For a project review, offer to turn the findings into TODOs in
+   `current/<project>.md` (as a `daily-notes-hygiene` change the user approves),
+   and to save the report under `<notes>/reports/<project>/<date>/`. In an
+   unattended run, fix confirmed findings that are inside the item's scope;
+   record the rest in the run report.

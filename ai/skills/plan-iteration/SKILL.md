@@ -149,15 +149,47 @@ For each item, write:
   broken input", not "improve X".
 - **Produces**: a local branch, a report, or a measurement,
   and where it will land.
-- **May do without asking**: the actions the run may take on its own.
+- **Reads**: what the run may read. Reading is always allowed; list it so the
+  run knows where to look.
+- **Writes over the network**: every action that changes something beyond this
+  machine's working copies. That covers pushing, uploading or saving a change
+  to a server, starting or cancelling jobs on shared systems, database or
+  storage writes, and anything sent to a person. Name each one and how many.
+  Anything not named here is not allowed.
 - **Stops before**: the gated action, if there is one.
 - **Size**: a rough estimate in hours, and the risk that it runs over.
+
+### Shape what gets built
+
+A TODO says what is wrong or missing. It does not say what to build. An item
+that builds or changes something needs a **shape** agreed before the run, so
+the run builds what the user wants, the way the user wants it.
+
+For each such item, work it out with the user. This is the same ground
+`superpowers:brainstorming` covers, condensed into this one planning sitting,
+because nobody will be there to ask during the run.
+
+| Part | What it settles |
+|---|---|
+| **Purpose** | which part of the north star it serves, and what is different for someone when it is done |
+| **What gets built** | the pieces, where each one lives, and how they connect to what exists |
+| **Reuse first** | the existing code, module or tool it extends rather than replaces. Building a second version of something that exists needs a stated reason. |
+| **Not built** | what is deliberately left out of this item, so the run does not widen it |
+| **Decisions** | each choice that changes what gets built, as a question with options and a recommendation. Choices left to the run are written down with the default it will use. |
+| **How we will know** | the "done when", stated as something a reviewer can run |
+
+Small fixes need no shape: the "done when" is enough. When a shape grows past
+about a screen, the item is too big for one run. Split it, or make "shape it"
+the item.
+
+The run builds to the shape. A decision it needs that the shape did not make
+is parked for the user, not made on the spot.
 
 ## 3. Get approval
 
 Present the plan as **one table**, one row per item:
 
-| # | Item | Why now | Done when | Produces | Stops before | Size |
+| # | Item | Why now | Done when | Writes over the network | Stops before | Size |
 |---|---|---|---|---|---|---|
 
 Below it, list the items left out and why. Then ask with **AskUserQuestion**,
@@ -165,8 +197,14 @@ recommended option first:
 
 - the north star question from step 1c, if there is a change;
 - one multi-select for the items to run;
-- one question per item that needs a decision before it can start;
-- the drop candidates and cleanup changes that were not proven in step 1.
+- the shape decisions for each item that builds something;
+- every write over the network the plan asks for, so each one is approved by
+  name;
+- the drop candidates and cleanup changes that were not proven in step 1;
+- the run's limits: how much of each shared resource it may use, measured
+  against what is already in use, and what to free up first;
+- where an alert goes if something scheduled breaks while nobody is watching,
+  and the one path by which results leave the machine.
 
 The user's answers are the approval. Nothing in the plan may need a decision
 after the user has left. If it does, the decision goes into this round of
@@ -176,7 +214,8 @@ questions, or the item stops at a gate.
 
 1. Write the approved plan to
    `<notes>/reports/<project>/<YYYY-MM-DD>/run-<HHMM>-plan.md`, using the start
-   date and time.
+   date and time. It holds the north star, each item with its shape, and every
+   approval word for word, because the run re-reads it at every step.
 2. In `current/<project>.md`, move the approved items to In Progress and add a
    pointer to the plan.
 3. Run `daily-notes-sync`.
