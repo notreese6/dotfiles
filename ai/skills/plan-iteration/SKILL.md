@@ -8,7 +8,8 @@ description: >-
   (recommends it or a change to it; the user approves). Then picks the items
   that move the project furthest in the time available, says for each one what
   "done" means and what it may do without a person, and gets the plan approved.
-  Fires on: make a plan, plan the run, what should we work on,
+  Plans a day worked together as well as an unattended run, and never starts
+  the work itself. Fires on: make a plan, plan the day, plan the run, what should we work on,
   plan the next iteration, queue up work, what can you do while I'm away,
   north star, what are we building toward.
 ---
@@ -27,6 +28,20 @@ takes the whole window to write, and the run never starts.
 
 An iteration is any stretch of work with a start and an end: overnight, an
 afternoon, a weekend. Nothing here assumes a time of day.
+
+**Ask first how the plan will be worked:** together, unattended, or together
+until a time and then unattended. A plan worked together skips the run-only
+parts (approved network writes, limits, alerts, preflight), because the user is
+there and the normal rules apply. Everything else is the same.
+
+**This skill never starts work.** It ends once the plan is recorded. An
+unattended run is started separately with `unattended-run`, which confirms the
+plan's scope with the user before it begins.
+
+**Where things live.** The work itself is the In Progress list in
+`current/<project>.md`; each item there carries its shape. The plan is an entry
+under `## Plans` in today's dated file: which In Progress items, in what order,
+how they will be worked, and the approvals. Nothing is written twice.
 
 If a private counterpart skill is installed (`unattended-run-local`), it names
 one organization's systems, limits and off-limits actions. Load it too.
@@ -114,8 +129,8 @@ TODO.
 
 ## 2. Choose
 
-Ask for the window if it was not given: when the run starts, and when the
-user will be back to review. Check what the run can reach (repository state,
+Ask for the window if it was not given: when the work starts, and for an
+unattended stretch, when the user will be back to review. Check what the run can reach (repository state,
 credentials, tools, limits on shared resources). Anything it cannot reach
 drops out here, not halfway through the run.
 
@@ -212,16 +227,30 @@ questions, or the item stops at a gate.
 
 ## 4. Record it
 
-1. Write the approved plan to
-   `<notes>/reports/<project>/<YYYY-MM-DD>/run-<HHMM>-plan.md`, using the start
-   date and time. It holds the north star, each item with its shape, and every
-   approval word for word, because the run re-reads it at every step.
-2. In `current/<project>.md`, move the approved items to In Progress and add a
-   pointer to the plan.
-3. Run `daily-notes-sync`.
+1. **In `current/<project>.md`:** move the approved items into In Progress,
+   in order, each with its "done when" and, if something will be built, its
+   shape indented under it. Put the stretch items at the top of TODOs as
+   `[>] stretch`. Set State's `Active plan:` line.
+2. **In today's dated file, under `## Plans`:** add the plan entry. If an
+   earlier plan is still active, mark it `replaced by HH:MM`.
 
-The run starts from this file. `unattended-run` reads it and nothing else, so
-anything said during planning that the run needs must be written in it.
+   ```markdown
+   ### 18:00 — unattended — active
+   Window: 18:00 – 08:00 (user back 08:30) · agreed 17:40 by the user
+   Items, in order: 1. <In Progress item>  2. <In Progress item>
+   Stretch: <TODO>, <TODO>
+   Writes over the network: 1. <item>: <what>, <how many>  2. none
+   Stops before: 1. <action>
+   Limits: <resource> <n> of <limit> · Alerts: <where> · Results leave via: notes sync
+   ```
+
+   A plan worked together needs only the first three lines.
+3. **Decisions** made while planning go under today's `## Notes` as
+   `**Decided (<user>, <YYYY-MM-DD>):**`.
+4. Run `daily-notes-sync`.
+
+Anything said during planning that the work needs must be written in one of
+those places. `unattended-run` reads them and nothing else.
 
 ## The north star
 

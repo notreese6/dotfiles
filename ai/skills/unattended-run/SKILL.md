@@ -2,8 +2,9 @@
 name: unattended-run
 description: >-
   Use when working through an approved plan with nobody watching: overnight,
-  over a weekend, or while the user is in meetings. Starts from an approved
-  plan, or makes one first with plan-iteration. Reads freely, writes only
+  over a weekend, or while the user is in meetings. Starts from the active
+  plan, or makes one first with plan-iteration, and confirms its scope with the
+  user before it begins. Reads freely, writes only
   locally unless the plan names the network write, re-reads the plan at every
   step so it stays on course for the north star, builds each item on its own
   local branch to its agreed shape, parks anything that needs a person, and
@@ -28,10 +29,14 @@ rules win.
 
 A long run outlives its own context. Details from planning get summarised away,
 and a run that works from memory drifts: it widens an item, fixes something
-nearby, or makes a decision the user never saw. So the plan file, not memory,
+nearby, or makes a decision the user never saw. So the written plan, not memory,
 decides what happens.
 
-**Re-read the plan file** (`<notes>/reports/<project>/<date>/run-<HHMM>-plan.md`):
+The plan is the active entry under `## Plans` in the dated file that State's
+`Active plan:` line names, together with the In Progress items it lists in
+`current/<project>.md`, which carry each item's shape.
+
+**Re-read the plan and its items:**
 
 - at the start of every item;
 - after any context compaction or summary;
@@ -57,9 +62,10 @@ plan held.
 Do this while the user is still around if possible. A missing input found at
 the start costs a minute; found halfway through the night, it costs the night.
 
-1. **An approved plan must exist.** If there is none, run `plan-iteration` first
-   and get it approved. The approval is the last decision a person makes in this
-   run.
+1. **An active plan must exist, and be current.** If there is none, or it was
+   agreed before the last run ended, run `plan-iteration` first. If it was a
+   plan for working together, ask for the run-only parts it lacks (approved
+   network writes, stops before, limits, alerts) and add them to the entry.
 2. **Read the plan, the north star and `current/<project>.md`.**
 3. **Preflight.** For every item, check what it needs and that it can be
    reached:
@@ -77,15 +83,21 @@ the start costs a minute; found halfway through the night, it costs the night.
    push or send commands, run one harmless blocked command and confirm the
    harness refuses it, not the agent. A file-system sandbox does nothing to
    stop network writes.
+7. **Confirm the scope and wait for "go".** Show the user one short brief: the
+   items in order with their "done when", every approved write over the
+   network, what each item stops before, the window and when results are
+   expected, and the preflight results. Their "go" is the last interactive
+   moment. Any change they make is written into the plan entry first.
 
-Anything that fails here drops its item, and the reason goes in the report.
+Anything that fails in steps 3 to 6 drops its item, and the reason goes in the
+brief and the report.
 
 ## Access: read freely, write locally, everything else only by name
 
 | Kind | Rule |
 |---|---|
 | **Reading** | Always allowed: files, repositories, logs, dashboards, databases (read-only), job status, documentation. |
-| **Local writes** | Allowed inside the run's worktrees, the run's report folder and scratch space. Nowhere else. |
+| **Local writes** | Allowed inside the run's worktrees, the run's scratch space, and the notes. Nowhere else. |
 | **Writes over the network** | Only those the plan names for this item, exactly as named and no more often. That covers pushing, uploading or saving a change to a server, starting, re-running or cancelling jobs, database and storage writes, changing shared configuration, and anything a person would receive. Anything not named is parked as a question. |
 | **Speaking as the user** | Never. Messages, comments, tickets, reviews and mail are drafted into the report for the user to send. |
 
@@ -131,9 +143,10 @@ is how results reach the user.
    in flight, check its status first. If that change would make this item
    redundant, record it and move on.
 3. **Plan the build.** Use `superpowers:writing-plans` to turn the agreed shape
-   into steps. Anything bigger than a small fix gets this. Write the plan into
-   the run's report folder, not the repository. Where the shape left a choice
-   open, use the default written in the plan.
+   into steps. Anything bigger than a small fix gets this. Keep these step
+   lists in the run's scratch space: they are working files, not notes or
+   reports. Where the shape left a choice open, use the default written in the
+   plan.
 4. **Build it** on branch `run/<YYYY-MM-DD>-<HHMM>/<item-slug>`, in its own
    worktree (`superpowers:using-git-worktrees`), with
    `superpowers:subagent-driven-development` and
@@ -184,8 +197,8 @@ for the user.
 
 ## The run report
 
-Write `<notes>/reports/<project>/<date>/run-<HHMM>-report.md`. The date and time
-are those of the plan. Start it when the first item starts, and update it after
+Write `<notes>/reports/<project>/<date>/run-<HHMM>-report.md`, using the date
+and time of the plan entry, and name the plan at its top. Start it when the first item starts, and update it after
 each item, so that a run that dies still leaves a report. Write its index
 before anything else lands in the folder, and keep scratch out of it. It is read
 in one sitting, so keep it short.
@@ -222,7 +235,8 @@ in one sitting, so keep it short.
    the hard way under today's `## Notes` as `**Learned:**`.
 3. Rewrite `## State` in `current/` from live data, stamped with the date and
    time, and copy it into today's dated file.
-4. Point `current/` at the report and run `daily-notes-sync`.
+4. Mark the plan entry `complete`, clear State's `Active plan:` line, point
+   `current/` at the report, and run `daily-notes-sync`.
 
 The review that follows feeds the next `plan-iteration`, whose first step
 brings this report's outcomes back into the notes.

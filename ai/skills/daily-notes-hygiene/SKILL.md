@@ -46,6 +46,7 @@ today). **Dated files are history and are never edited.**
 | **Missing or bare link** | a blocker with no URL, or an entry that names a review, merge request, bug or ticket by bare ID | the full URL to put in |
 | **Stale State** | a `## State` older than the last run or plan, or one that contradicts live data | the live value |
 | **History in current/** | an entry carrying its own long history instead of a pointer | the dated note or report to point at |
+| **Plans** | a plan still `active` whose items are all done, or older than the last run; an `Active plan:` line that names a plan that is not active; an In Progress item with no "done when"; a plan restating a shape instead of naming the item | the plan entry and the items |
 | **Pointers** | a report pointer that is not the newest date folder holding that report; a dead link or path | the newer path |
 | **Serves nothing** | a TODO that no part of the north star explains | the item; ask whether to drop it, or which part of the north star it serves |
 | **Nothing serves it** | a part of the north star with no TODO working toward it | that part; propose the TODO |
