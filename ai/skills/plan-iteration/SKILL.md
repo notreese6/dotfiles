@@ -29,10 +29,25 @@ takes the whole window to write, and the run never starts.
 An iteration is any stretch of work with a start and an end: overnight, an
 afternoon, a weekend. Nothing here assumes a time of day.
 
-**Ask first how the plan will be worked:** together, unattended, or together
-until a time and then unattended. A plan worked together skips the run-only
-parts (approved network writes, limits, alerts, preflight), because the user is
-there and the normal rules apply. Everything else is the same.
+**Open with one AskUserQuestion holding these questions, each with its own
+options**, so they are answered together:
+
+1. **How the plan will be worked:** together, unattended, or together and then
+   unattended. Exactly those three, with no times attached. A plan worked
+   together skips the run-only parts (approved network writes, limits, alerts,
+   preflight), because the user is there and the normal rules apply.
+   Everything else is the same.
+2. **When the work starts:** now, at a stated later time, and so on. Options
+   are relative to now ("now", "in an hour"); the exact time goes in the
+   free-text answer.
+3. **When it ends and the user reviews it:** for example in a few hours,
+   tomorrow, or after the weekend, with the exact time in the free-text answer.
+4. **When work hands over to the run** (only for together and then
+   unattended).
+
+The timeframe options never assume a time of day from the clock, such as
+"overnight" or "until morning". The user states the window, and the plan
+records it in their words.
 
 **This skill never starts work.** It ends once the plan is recorded. An
 unattended run is started separately with `unattended-run`, which confirms the
@@ -109,14 +124,20 @@ guesses.
 Read the `## North Star` at the top of `current/<project>.md` (see "The north
 star" below).
 
-- **One exists:** recommend either "unchanged", with one line on why it still
-  holds, or a specific edit with the evidence for it: a decision from review,
-  a meeting, a change of scope. The user approves or changes it. Most passes
+- **One exists:** check what has been said since it was agreed (meetings,
+  chats, decisions), then recommend either "unchanged", with one line on why it
+  still holds, or a specific edit with the evidence for it: a decision from
+  review, a meeting, a change of scope. The user approves or changes it. Most passes
   through the loop end at "unchanged", and that is correct.
-- **None exists:** draft one from what the owners and users have said
-  (meeting recaps, design docs, earlier reports), with a
-  baseline for each measure taken from the project's data. Show the draft and
-  write it only once the user approves.
+- **None exists:** draft one from what the owners and users have said. That
+  means meeting transcripts and recaps, chats, and the design and program
+  pages they wrote, read again for this draft rather than recalled. Earlier
+  reports come after those. Meetings and what people have communicated carry
+  the most weight; the notes and the code show what was done, not what was
+  wanted. When the material is large, research it in the background first.
+  Take a baseline for each measure from the project's data. Where the owners
+  disagree or have said nothing, keep that out of the north star and raise it
+  as a TODO. Show the draft and write it only once the user approves.
 
 Write any change to `current/`. Note it in today's dated note with the
 reason, so the history of the goal can be traced.
@@ -129,10 +150,9 @@ TODO.
 
 ## 2. Choose
 
-Ask for the window if it was not given: when the work starts, and for an
-unattended stretch, when the user will be back to review. Check what the run can reach (repository state,
-credentials, tools, limits on shared resources). Anything it cannot reach
-drops out here, not halfway through the run.
+Use the timeframe from the opening questions. Check what the run can reach
+(repository state, credentials, tools, limits on shared resources). Anything it
+cannot reach drops out here, not halfway through the run.
 
 Rank the open TODOs and In Progress items. Do not rank by size or ease.
 Ranking, in order:
