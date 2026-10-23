@@ -62,6 +62,15 @@ plan held.
 Do this while the user is still around if possible. A missing input found at
 the start costs a minute; found halfway through the night, it costs the night.
 
+**Always ask for "go" before starting, whatever the request says.** "Run the
+plan", "start the run" and "go ahead" are requests to begin the run, not the go.
+Until the user answers the brief in the last step below, do only read-only preflight checks:
+no writes to Perforce, Jenkins or any server, no new clients or workspaces, no
+files outside the run's scratch. Do every quick check first, so the brief asks
+for everything still missing in one message. Never skip the brief because the
+plan was already approved: the plan approves what may be done, and "go" approves
+doing it now.
+
 1. **An active plan must exist, and be current.** If there is none, or it was
    agreed before the last run ended, run `plan-iteration` first. If it was a
    plan for working together, ask for the run-only parts it lacks (approved
@@ -82,8 +91,14 @@ the start costs a minute; found halfway through the night, it costs the night.
 6. **Prove the fence.** If the run depends on the harness blocking publish,
    push or send commands, run one harmless blocked command and confirm the
    harness refuses it, not the agent. A file-system sandbox does nothing to
-   stop network writes.
-7. **Confirm the scope and wait for "go".** Show the user one short brief: the
+   stop network writes. Also read the permission settings: with no deny rules,
+   only interactive prompts stand in the way, and an unattended run either
+   stalls at the first one or has no fence at all. Propose deny rules for every
+   submit, publish and send command in the brief.
+7. **Report what could not be verified.** A check that returned nothing, with
+   no positive control, is "not verified", not "none". Name each one in the
+   brief with what is needed to settle it.
+8. **Confirm the scope and wait for "go".** Show the user one short brief: the
    items in order with their "done when", every approved write over the
    network, what each item stops before, the window and when results are
    expected, and the preflight results. Their "go" is the last interactive
