@@ -152,18 +152,49 @@ TODO.
 
 Use the timeframe from the opening questions. Check what the run can reach
 (repository state, credentials, tools, limits on shared resources). Anything it
-cannot reach drops out here, not halfway through the run.
+cannot reach drops out here, not halfway through the run. Check the window
+against the user's availability too: their calendar, and anything they have
+said recently about being away. A review time they cannot keep is not a window.
 
-Rank the open TODOs and In Progress items. Do not rank by size or ease.
-Ranking, in order:
+### Take an inventory first
+
+The TODO list is one source of work, not the only one. Before ranking, collect
+candidates from all four:
+
+1. **What the user owes other people**: replies, documents, reviews, reports
+   and decisions someone is waiting on, with their due dates. Look in recent
+   notes, meeting recaps and messages, not only in the TODOs.
+2. **What runs or is scheduled during the window**: jobs, scheduled runs,
+   deliveries and results that will land. Each one needs someone to notice if it
+   goes wrong.
+3. **Decisions waiting on the user**: the Blockers on them, and any question
+   left open in State, the notes or an earlier plan.
+4. **The open TODOs and In Progress items.**
+
+**Check cheap facts now.** When a quick read-only check could show that an item
+is already done, not needed, or a different size, do it while planning. An
+answer found halfway through the run is an item the run should never have had.
+
+### Rank
+
+Do not rank by size or ease. Ranking, in order:
 
 1. **Unblocks the user.** Anything that lets the user finish or send something
    when they are back: reviews to respond to, a fix someone is waiting on.
-2. **Moves a north star measure.** Prefer the item that moves the headline
-   measure most, per hour of run time.
-3. **Removes recurring cost.** Something that fails or needs hand-holding every
+2. **Commitments the user owes**, by due date, overdue first.
+3. **Moves a north star measure.** Prefer the item that moves the headline
+   measure most, per hour of run time. **Check the claim before ranking on it:**
+   follow the item's output to the measure and confirm it actually changes it.
+   An item that does not move a measure is upkeep or a guardrail; say so, and
+   rank it as one.
+4. **Removes recurring cost.** Something that fails or needs hand-holding every
    day.
-4. **Closes a gap.** A part of the north star nothing is working on yet.
+5. **Closes a gap.** A part of the north star nothing is working on yet.
+
+**Anything that runs during the window gets watched.** When the inventory found
+scheduled or running work, the plan includes a read-only watch item: check
+times taken from the schedules, what counts as healthy, and that problems are
+recorded rather than fixed.
 
 Then filter on what can actually be done unattended:
 
@@ -173,8 +204,18 @@ Then filter on what can actually be done unattended:
 | **Run to a gate** | Can be prepared up to one action that needs approval (a production write, a merge, a message) | yes, and it stops at the gate |
 | **Needs a person** | Needs a decision or a reply before any useful work | no; it goes to the questions in step 3 |
 
-Fill the window, then add two or three **stretch items** in ranked order, so a
-run that finishes early has more work to pick up. If there is time after
+### Lay it out against the clock
+
+For each item, note what it needs as input and when that input exists: a job
+that has to finish, results that land at a known time, an answer from another
+item. Order the items by when they can start, with the slowest outside work
+started first. An item placed before its input exists does its work on
+incomplete data.
+
+Then check capacity: add up the estimates, and the waits between them, against
+the window. If the plan does not fill it, keep adding from the ranked inventory.
+Then add two or three **stretch items** in ranked order, so a run that finishes
+early has more work to pick up. If there is time after
 that, the run spends it on `adversarial-review` of the riskiest finished items.
 
 For each item, write:
@@ -221,6 +262,13 @@ The run builds to the shape. A decision it needs that the shape did not make
 is parked for the user, not made on the spot.
 
 ## 3. Get approval
+
+**Review the draft before showing it.** Read it as a stranger would and ask:
+does every commitment due in or soon after the window have an item or a reason?
+Is everything running in the window watched? Does each item's input exist by the
+time it starts? Does each "moves a measure" claim hold? Is the window full? Is
+every open decision either answered by the plan or in the questions below? Is
+the review time one the user can keep? Fix what fails, then present it.
 
 Present the plan as **one table**, one row per item:
 
