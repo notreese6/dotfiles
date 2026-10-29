@@ -89,10 +89,12 @@ away.
    **broken**, each with a one-line reason. Then list the findings, most severe
    first: wrong results and silent failures, then direction, then duplication
    and staleness, then readability and style. Use `ReportFindings` if it is
-   available; otherwise one table:
-
-   | # | Lens | Where | What fails | Scenario | Verdict |
-   |---|---|---|---|---|---|
+   available; otherwise write the report in the review checklist format from the
+   daily-notes rules: one checkbox item per finding with an ID, **Where**, **What goes
+   wrong**, **Recommend**, **Evidence** and **Done when**, grouped by what is fixed
+   together, with the one-line verdict per lens at the top. The user works through the
+   list over the day and the agent ticks items as they are done, so the list must stay
+   stable.
 
    When a lens finds nothing, say what it checked. "Clean" without the list of
    checks claims more than the review showed.

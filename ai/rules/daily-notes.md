@@ -150,6 +150,37 @@ the same document because there was nowhere else for the next version to go.
 - `current/<project>.md` points at the report's newest file path, and is updated when a
   new version lands. `reports/README.md` indexes every report.
 
+**Reports that end in decisions or fixes use the checklist format.** A digest of
+things to decide, a review's findings, a plan: each is worked through over a day with
+an agent, so it is a list to tick off, not prose to read once. Wall-of-text preambles
+and wide tables with a cramped last column are how these became unreadable.
+
+- **Title says what it is.** No weekday, no "tomorrow", no "weekend run"; the date and
+  the time, with the zone, go in the header table. Run type (attended or not) is not
+  part of the title.
+- **Header as plain `Label: value` lines, not a table, then a summary of at most three
+  sentences.** The lines are *Written*, *Last updated*, *Covers* (what was reviewed,
+  and its commit or version) and *Progress* (`N of M done`). Sources go in a *Sources*
+  list at the end. The checklist is read top to bottom, so there is no separate "start
+  here" list.
+- **Every item is a checkbox with a stable ID** (`A1`, `B3`), an imperative title, and
+  the same lines under it: **Context** (what it is and why it came up, in two or three
+  sentences, so it makes sense without opening another file), **Recommend**, **Why**,
+  **Evidence** (a path or full URL) and **Done when**. A finding adds **Where** and
+  **What goes wrong**. Each group heading gets one sentence saying what the group is.
+- **Prefer lists to tables.** A table is for short, comparable values only: at most
+  four columns, no `#` column (the ID lives in the item), no cell longer than a short
+  phrase. A name with a link, or anything longer, is a list item.
+- **Reviews come first, then work.** Put what waits on the user (decisions, drafts, reviews) in the first group, and work after it. Every item of new work says which north star measure or guardrail it serves; work that serves none goes under a *Parked* group and is not added to the list.
+- **Group items by what you do next** (short decisions, fixes, drafts to send), then
+  *Settled*, *Not checked* and *Log*. Leave a place for what the template did not
+  expect, such as an *Added later* group.
+- **Working through it is the point.** When an item is finished, in the same turn:
+  tick it, add one line to the *Log* (time, what changed, a link), and update
+  *Last updated* and *Progress*. Do not reorder, merge or drop items the user has not
+  dropped, so the day stays on the list; new work goes under *Added later* with its
+  time. A skipped item is ticked with the reason beside it.
+
 **Pick the right project (every update):** before writing any of these files, decide which project the work actually belongs to — do NOT assume it's the session's origin project. A session that started on one project (e.g. recipe-app) may turn to a different project, or touch several at once. File under the matching `<project>.md` (or `general.md`); if the work spans a group of projects, update each one's files. That is *which* project; step 2 of the procedure below is what it is *called*, and both have to be right.
 
 **`current/` live rollup:** `<notes>/current/<project>.md` is the single "what's open right now" view for each project. It holds no Accomplishments (those are the dated history), and these sections, in this order:

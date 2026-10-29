@@ -76,6 +76,11 @@ doing it now.
    plan for working together, ask for the run-only parts it lacks (approved
    network writes, stops before, limits, alerts) and add them to the entry.
 2. **Read the plan, the north star and `current/<project>.md`.**
+   **Reviews come before new work.** List everything from earlier runs that still
+   waits on the user (decisions, drafts to send, branches to review). A plan that
+   builds on an unreviewed item, or that adds items while that pile is large, is sent
+   back: the brief asks the user to clear or drop the pile first. The plan holds only
+   as many items, stretch items included, as the user can review in one sitting.
 3. **Preflight.** For every item, check what it needs and that it can be
    reached:
    - each service it reads from is signed in, or has a named fallback or "skip";
@@ -220,26 +225,29 @@ in one sitting, so keep it short.
 
 1. **Bottom line**: two or three sentences on what landed, what needs the user,
    and anything that went wrong.
-2. **Not done**: what was planned but did not happen, and why. This goes first,
-   so the gaps are seen before the successes.
-3. **One table, one row per item:**
-
-   | # | Item | Result | Where | How it was verified | Needs you |
-   |---|---|---|---|---|---|
-
-   Result is one of `done`, `partial`, `stopped at gate`, `parked`, or
-   `not started`. Where is the branch name or report path, with the exact
-   command to see the change (for example,
-   `git diff main...run/<date>-<time>/<item>`).
-4. **Needs you**: each decision, with its options and a recommendation, in the
-   form of an AskUserQuestion, so the user can answer them all at once. Drafts
-   of anything to send go here too.
-5. **What moved**: any north star measure that changed, before and after, with
+2. **Review first**: everything waiting on the user, from this run and from earlier
+   ones, as checklist items: each decision with its options and a recommendation
+   (in the form of an AskUserQuestion, so they can be answered together), each
+   draft to send, each branch to review. The user clears this before any new work
+   starts.
+3. **Not done**: what was planned but did not happen, and why, so the gaps are seen
+   before the successes.
+4. **The items worked**, as a checklist (the review checklist format from the
+   daily-notes rules): one checkbox item per planned item, with an ID and these
+   lines: **Result** (`done`, `partial`, `stopped at gate`, `parked` or `not
+   started`), **Moves** (the north star measure or guardrail it serves; an item
+   that moves none says it is upkeep), **Where** (the branch name or report path,
+   with the exact command to see the change, for example
+   `git diff main...run/<date>-<time>/<item>`) and **Verified** (how).
+5. **Parked**: work noticed during the run that was not added, because no
+   north star measure or guardrail explains it, each with one line on why. The user
+   drops it or promotes it; the run never adds it on its own.
+6. **What moved**: any north star measure that changed, before and after, with
    its source. If nothing could be measured, say so.
-6. **Not verified**: anything the run could not check against a live system,
+7. **Not verified**: anything the run could not check against a live system,
    and every guess, labelled as one.
-7. **Left behind**: files, branches, jobs still running, and when to look at them.
-8. **Run log**: from "The plan is the anchor".
+8. **Left behind**: files, branches, jobs still running, and when to look at them.
+9. **Run log**: from "The plan is the anchor".
 
 **End with a realign**, so the next plan starts from notes that match reality:
 
