@@ -63,6 +63,7 @@ away.
 | **Silent failure** | a path that does nothing and reports success; a missing input that is not checked; an empty result that looks the same as a clean one |
 | **Duplication and rewriting** | the same logic in two places; a new helper that reimplements one that exists; two ways of doing one job (two config readers, two HTTP clients, two date formats); code copied instead of shared |
 | **Dead and stale** | unused code, flags, files and dependencies; comments that describe code that has since changed; `XXX - TODO` markers for work that is done, and unfinished paths with no marker |
+| **Still needed** | an addition that exists to prevent a failure that can no longer happen: a workaround, shim, retry, guard, flag, test or comment added for a problem a later change removed. It is reachable and its comment is accurate, so the dead-and-stale lens cannot see it. Name the failure it prevents, then check the failure still occurs without it: remove the addition and run the build or tests, or read the path it guards. Also two branches that now do the same thing, and a `XXX - TODO` whose condition has already been met |
 | **Readable** | a function a newcomer cannot follow in one pass; a name that says the wrong thing; a dense line with no comment; a file whose order makes the reader jump around; `main` doing work instead of calling it |
 | **Style and rules** | breaks of the user's written code rules and the project's own conventions: contracts, layout, naming, logging tags, argument parsing, file placement |
 | **Tests** | tests that would still pass if the code were broken: mutate a key line and see whether anything fails; behaviour with no test; tests that check the mock instead of the code |
@@ -82,6 +83,8 @@ away.
    `file:line`, a one-line summary and a failure scenario.
 3. **Attack the findings.** For each finding, run a separate subagent that tries
    to refute it. Drop the refuted ones. Merge duplicates found by several lenses.
+   For a still-needed finding the attacker tries to bring the original failure back without the
+   addition; if it cannot, the finding stands.
 4. **Report.** Start with one verdict per lens: **on track**, **drifting** or
    **broken**, each with a one-line reason. Then list the findings, most severe
    first: wrong results and silent failures, then direction, then duplication
