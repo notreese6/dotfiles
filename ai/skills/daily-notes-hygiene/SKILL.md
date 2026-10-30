@@ -42,7 +42,7 @@ today). **Dated files are history and are never edited.**
 | **Stale In Progress** | In Progress with no activity in the notes or history for more than about a week | the last date it was touched |
 | **Markers** | a dated item within 7 days that is not `[!]`; a passed date not marked `OVERDUE`; too many `[!]` items; bare `- ` bullets; a list out of order | the item |
 | **Vague** | an item with no way to tell when it is done | the item; propose a "done when" |
-| **Closed blocker** | a Blockers row whose review, merge request, bug or ticket has merged, closed or been abandoned | the live status from that system; move the outcome to Accomplishments and drop the row |
+| **Closed blocker** | a Blockers entry whose review, merge request, bug or ticket has merged, closed or been abandoned | the live status from that system; move the outcome to Accomplishments and drop the row |
 | **Missing or bare link** | a blocker with no URL, or an entry that names a review, merge request, bug or ticket by bare ID | the full URL to put in |
 | **Stale State** | a `## State` older than the last run or plan, or one that contradicts live data | the live value |
 | **History in current/** | an entry carrying its own long history instead of a pointer | the dated note or report to point at |
@@ -69,8 +69,8 @@ applied by default.
 ### 3. Apply
 
 1. Apply only what was approved.
-2. Re-sort the TODO list by the daily-notes rules: `[!]`, `[>]`, `[ ]`, `[~]`;
-   dated items first within each tier.
+2. Re-sort the TODO, Blockers and In Progress lists by the daily-notes rules: `[!]`,
+   `[>]`, `[ ]`, `[~]`; dated items first within each tier, then by priority.
 3. An item that is finished goes into the dated file for the day it actually
    finished, as an Accomplishment. If that day is not today, it goes into
    today's file with a note of when it landed. Past dated files are never
@@ -85,7 +85,7 @@ when a run ends. It covers only the items in question: the last run's items,
 or what has moved since the last plan.
 
 - Mark finished items done and add the TODOs that came up.
-- Drop Blockers rows whose link has merged or closed. Fill in
+- Drop Blockers entries whose link has merged or closed. Fill in
   missing links.
 - Fix markers and pointers.
 - Point `current/` at the newest plan or run report.

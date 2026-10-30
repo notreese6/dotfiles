@@ -97,7 +97,7 @@ system, not the report alone. Then:
 
 Then refresh the two live sections of `current/`:
 
-- **Blockers.** Check each row's link against the system it points at
+- **Blockers.** Check each entry's link against the system it points at
   (review, merge request, bug, ticket). A row that has merged,
   closed or been abandoned leaves the table. Its outcome goes in
   today's Accomplishments, which keeps the link. A row waiting more than a week

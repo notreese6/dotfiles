@@ -253,7 +253,7 @@ in one sitting, so keep it short.
 
 1. Run the light `daily-notes-hygiene` pass over the items this run touched.
 2. Make sure every item's state in `current/` matches the report, and that the
-   TODOs the run uncovered are added. Add a Blockers row, with its link, for
+   TODOs the run uncovered are added. Add a Blockers entry, with its link, for
    everything the run left waiting on a person. Write anything the run learned
    the hard way under today's `## Notes` as `**Learned:**`.
 3. Rewrite `## State` in `current/` from live data, stamped with the date and

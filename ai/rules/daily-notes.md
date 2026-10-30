@@ -60,8 +60,8 @@ answers, and only the first is ever surprising.
 
 ## Prioritizing TODOs — markers, dates, and when to surface them
 
-Every item under `## TODOs` carries one of four markers. They sort in this order,
-and a TODO list is **always** written sorted:
+Every item under `## TODOs`, `## Blockers` and `## In Progress` carries one of four
+markers. They sort in this order, and each of those lists is **always** written sorted:
 
 | Marker | Means | Date |
 |---|---|---|
@@ -80,8 +80,10 @@ and a TODO list is **always** written sorted:
 ```
 
 **Sort order within a tier:** dated items first, by date ascending, then undated
-items in the order they were already in. Re-sorting must never churn a line that
-did not need to move.
+items by priority, the one that matters most first. A new item goes at its rank,
+never at the end because that is the easy edit, and an item whose priority changed
+moves to its new rank. Items that tie keep the order they were already in, so
+re-sorting never churns a line that did not need to move.
 
 **Dates are the mechanism, not decoration.** Write `by YYYY-MM-DD` immediately
 after the marker — that is what makes a deadline greppable and sortable. Convert
@@ -103,13 +105,14 @@ belongs to it), surface that project's `[!]` items and anything dated within 7
 days. Nothing else, and not again in that session unless something changes or I
 ask for it.
 
-**`## In Progress` uses the same markers** so one scan finds everything, but it is
-**not** force-sorted — its order carries the narrative of how the work went. Mark
-an in-progress item `[!]` when it is blocked or has a date bearing down on it.
+**`## Blockers` and `## In Progress` use the same markers and the same sort**, so
+one scan finds everything and the most urgent entry is always first. How the work
+went is told in the dated notes, not by the order of the list. Mark an in-progress
+item `[!]` when it is blocked or has a date bearing down on it.
 
-**How to apply:** assign a marker whenever you add or touch a TODO — never write
-a bare `- ` bullet under `## TODOs`. When you touch any TODO in a file, re-sort
-that whole list before saving. When a date comes up in conversation ("the
+**How to apply:** assign a marker whenever you add or touch a TODO, blocker or
+in-progress item — never write a bare `- ` bullet under those headings. When you
+touch any item in one of those lists, re-sort that whole list before saving. When a date comes up in conversation ("the
 migration is the 15th"), convert it to `by YYYY-MM-DD` and attach it right then.
 
 **Dated files are history — never re-prioritize them.** These markers apply to
@@ -191,7 +194,14 @@ and wide tables with a cramped last column are how these became unreadable.
 **`current/` live rollup:** `<notes>/current/<project>.md` is the single "what's open right now" view for each project. It holds no Accomplishments (those are the dated history), and these sections, in this order:
 - `## North Star` (optional) — the end state every TODO works toward. Agreed with the user at the start of each `plan-iteration` and changed nowhere else.
 - `## State` — at most five lines, stamped with date and time, **rewritten in place** (never appended to): how the project stands, where to look next, and the newest report. A copy goes into that day's dated file, so states can be compared over time.
-- `## Blockers` — one table row per thing waiting on a person: `| marker | Waiting on | What | Link | Since |`. Every review, merge request, bug or ticket waiting on someone sits here with its **full URL**. **When it merges, closes or is abandoned, its row leaves** — the dated Accomplishment that records the outcome keeps the link. A blocker with no live link is either not a blocker or is missing its link.
+- `## Blockers` — one entry per thing waiting on a person, sorted by marker like the TODOs, in this format (bullets, never a table, so it stays readable):
+  ```markdown
+  - [!] **Waiting on:** <person, team or group>
+    - **What:** <what is waiting, in a sentence or two; the history lives in the dated note>
+    - **Link:** <full URL>
+    - **Since:** <YYYY-MM-DD>
+  ```
+  Every review, merge request, bug or ticket waiting on someone sits here with its **full URL**. **When it merges, closes or is abandoned, its entry leaves** — the dated Accomplishment that records the outcome keeps the link. A blocker with no live link is either not a blocker or is missing its link.
 - `## In Progress` and `## TODOs` — one short entry each, with a pointer to the dated note or report that holds the history. The history itself does not live here. An In Progress item that something will be built for carries its **shape** indented under it — purpose, what gets built, what it reuses, what is not built, the decisions, and how we will know it is done — so working on it together and an unattended run build the same thing. When a plan is active, State names it: `Active plan: <YYYY-MM-DD>/<project>.md, Plans, HH:MM`.
 
 **Capturing TODOs (any session, any project — this is global):** Whenever you raise, change, or finish a TODO in conversation — *not only* when a big task completes — immediately reflect it in BOTH that project's `current/<project>.md` and today's `<date>/<project>.md` TODOs, filed under the right project. This whole notes system is global across all sessions and projects: a TODO about a different project (even one raised mid-session here) is captured under *that* project, not the session's origin project.
