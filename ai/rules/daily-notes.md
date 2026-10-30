@@ -142,7 +142,12 @@ the same document because there was nowhere else for the next version to go.
 - **Name files for the report** (`<report>-00-index.md`, `<report>-findings.md`), since
   several reports can land in one project on one day.
 - **Updating a report: copy its files from the newest date folder that holds them into
-  today's folder and edit the copies.** A second update the same day edits today's copy.
+  today's folder and edit the copies.** A second update the same day edits today's copy
+  in place.
+- **One file per report per day, edited in place.** No `-v2`, no "kept unchanged" side
+  copy, no second file for a revision, unless the user says to keep one: git carries the
+  history. A new file is for a different report (another audience, window or kind), never
+  for another version of this one.
 - **Never edit an older date folder unless explicitly asked.** It records what the
   report said on that day — history, like a dated note.
 - Do not rename files when copying forward or moving a report in — the
